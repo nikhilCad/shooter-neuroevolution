@@ -17,6 +17,9 @@ Player CreatePlayer(Vector2 startCenter, float size, float speed, int maxHealth,
 // Moves the player by moveDir (roughly unit length) and turns it to face aimDir,
 // clamping it inside the screen. Both directions come from the controlling agent.
 void UpdatePlayer(Player &player, Vector2 moveDir, Vector2 aimDir, float deltaTime, int screenWidth, int screenHeight);
+// Keeps the player's body inside the screen bounds. Exposed so callers can
+// re-clamp after nudging the player during collision resolution.
+void ClampPlayerToScreen(Player &player, int screenWidth, int screenHeight);
 void DrawPlayer(const Player &player);
 Rectangle GetPlayerRect(const Player &player);
 Vector2 GetAimDirection(const Player &player);

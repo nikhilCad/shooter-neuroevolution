@@ -15,4 +15,5 @@ Enemy SpawnEnemy(int screenWidth, int screenHeight, float size, float speed, int
 void UpdateEnemy(Enemy &enemy, float deltaTime, Vector2 targetCenter);
 void DrawEnemy(const Enemy &enemy);
 Rectangle GetEnemyRect(const Enemy &enemy);
+Vector2 GetEnemyCenter(const Enemy &enemy);
 void DamageEnemy(Enemy &enemy, int amount);

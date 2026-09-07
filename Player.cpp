@@ -20,7 +20,15 @@ void UpdatePlayer(Player &player, Vector2 moveDir, Vector2 aimDir, float deltaTi
     player.center.x += moveDir.x * player.speed * deltaTime;
     player.center.y += moveDir.y * player.speed * deltaTime;
 
-    // Keep the player inside the window (screen collision)
+    ClampPlayerToScreen(player, screenWidth, screenHeight);
+
+    // Face the aim direction
+    if (fabsf(aimDir.x) > 0.0001f || fabsf(aimDir.y) > 0.0001f)
+        player.rotation = atan2f(aimDir.y, aimDir.x) * RAD2DEG;
+}
+
+void ClampPlayerToScreen(Player &player, int screenWidth, int screenHeight)
+{
     float half = player.size / 2.0f;
     if (player.center.x < half)
         player.center.x = half;
@@ -30,10 +38,6 @@ void UpdatePlayer(Player &player, Vector2 moveDir, Vector2 aimDir, float deltaTi
         player.center.x = screenWidth - half;
     if (player.center.y > screenHeight - half)
         player.center.y = screenHeight - half;
-
-    // Face the aim direction
-    if (fabsf(aimDir.x) > 0.0001f || fabsf(aimDir.y) > 0.0001f)
-        player.rotation = atan2f(aimDir.y, aimDir.x) * RAD2DEG;
 }
 
 Vector2 GetAimDirection(const Player &player)

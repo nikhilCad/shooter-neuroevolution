@@ -62,6 +62,11 @@ Rectangle GetEnemyRect(const Enemy &enemy)
     return {enemy.position.x, enemy.position.y, enemy.size, enemy.size};
 }
 
+Vector2 GetEnemyCenter(const Enemy &enemy)
+{
+    return {enemy.position.x + enemy.size / 2.0f, enemy.position.y + enemy.size / 2.0f};
+}
+
 void DamageEnemy(Enemy &enemy, int amount)
 {
     enemy.health -= amount;
