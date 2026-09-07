@@ -1,7 +1,15 @@
 #include "PlayerAgent.h"
 #include <cmath>
 #include <algorithm>
-#include <limits>
+
+namespace
+{
+    struct EnemyDistance
+    {
+        float distSq;
+        const Enemy *enemy;
+    };
+}
 
 std::vector<float> GetPlayerState(const Player &player, const std::vector<Enemy> &enemies,
                                    int screenWidth, int screenHeight)
@@ -12,40 +20,42 @@ std::vector<float> GetPlayerState(const Player &player, const std::vector<Enemy>
     state[1] = player.center.y / screenHeight;
     state[2] = (float)player.health / (float)player.maxHealth;
 
-    const Enemy *nearest = nullptr;
-    float nearestDistSq = std::numeric_limits<float>::max();
-    int activeCount = 0;
+    std::vector<EnemyDistance> distances;
+    distances.reserve(enemies.size());
     for (const auto &enemy : enemies)
     {
         if (!enemy.active)
             continue;
-        activeCount++;
         Vector2 enemyCenter = GetEnemyCenter(enemy);
         float dx = enemyCenter.x - player.center.x;
         float dy = enemyCenter.y - player.center.y;
-        float distSq = dx * dx + dy * dy;
-        if (distSq < nearestDistSq)
+        distances.push_back({dx * dx + dy * dy, &enemy});
+    }
+    std::sort(distances.begin(), distances.end(), [](const EnemyDistance &a, const EnemyDistance &b)
+              { return a.distSq < b.distSq; });
+
+    float maxDist = sqrtf((float)(screenWidth * screenWidth + screenHeight * screenHeight));
+
+    for (int slot = 0; slot < PLAYER_AGENT_NEAREST_ENEMY_COUNT; slot++)
+    {
+        int base = 3 + slot * PLAYER_AGENT_FEATURES_PER_ENEMY;
+        if (slot < (int)distances.size())
         {
-            nearestDistSq = distSq;
-            nearest = &enemy;
+            const Enemy &enemy = *distances[slot].enemy;
+            Vector2 enemyCenter = GetEnemyCenter(enemy);
+            state[base + 0] = (enemyCenter.x - player.center.x) / screenWidth;
+            state[base + 1] = (enemyCenter.y - player.center.y) / screenHeight;
+            state[base + 2] = sqrtf(distances[slot].distSq) / maxDist;
+            state[base + 3] = (float)enemy.health / (float)enemy.maxHealth;
+        }
+        else
+        {
+            state[base + 2] = 1.0f; // no enemy in this slot: "maximally far away"
         }
     }
 
-    float maxDist = sqrtf((float)(screenWidth * screenWidth + screenHeight * screenHeight));
-    if (nearest != nullptr)
-    {
-        Vector2 nearestCenter = GetEnemyCenter(*nearest);
-        state[3] = (nearestCenter.x - player.center.x) / screenWidth;
-        state[4] = (nearestCenter.y - player.center.y) / screenHeight;
-        state[5] = sqrtf(nearestDistSq) / maxDist;
-        state[6] = (float)nearest->health / (float)nearest->maxHealth;
-    }
-    else
-    {
-        state[5] = 1.0f; // no enemy nearby: report "maximally far away"
-    }
-
-    state[7] = std::min(activeCount / 10.0f, 1.0f);
+    int activeCountIndex = 3 + PLAYER_AGENT_NEAREST_ENEMY_COUNT * PLAYER_AGENT_FEATURES_PER_ENEMY;
+    state[activeCountIndex] = std::min((float)distances.size() / 10.0f, 1.0f);
 
     return state;
 }
