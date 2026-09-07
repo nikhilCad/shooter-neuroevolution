@@ -15,17 +15,10 @@ Player CreatePlayer(Vector2 startCenter, float size, float speed, int maxHealth,
     return player;
 }
 
-void UpdatePlayer(Player &player, float deltaTime, int screenWidth, int screenHeight)
+void UpdatePlayer(Player &player, Vector2 moveDir, Vector2 aimDir, float deltaTime, int screenWidth, int screenHeight)
 {
-    // Move with WASD or arrow keys
-    if (IsKeyDown(KEY_W) || IsKeyDown(KEY_UP))
-        player.center.y -= player.speed * deltaTime;
-    if (IsKeyDown(KEY_S) || IsKeyDown(KEY_DOWN))
-        player.center.y += player.speed * deltaTime;
-    if (IsKeyDown(KEY_A) || IsKeyDown(KEY_LEFT))
-        player.center.x -= player.speed * deltaTime;
-    if (IsKeyDown(KEY_D) || IsKeyDown(KEY_RIGHT))
-        player.center.x += player.speed * deltaTime;
+    player.center.x += moveDir.x * player.speed * deltaTime;
+    player.center.y += moveDir.y * player.speed * deltaTime;
 
     // Keep the player inside the window (screen collision)
     float half = player.size / 2.0f;
@@ -38,9 +31,9 @@ void UpdatePlayer(Player &player, float deltaTime, int screenWidth, int screenHe
     if (player.center.y > screenHeight - half)
         player.center.y = screenHeight - half;
 
-    // Face the mouse cursor
-    Vector2 mouse = GetMousePosition();
-    player.rotation = atan2f(mouse.y - player.center.y, mouse.x - player.center.x) * RAD2DEG;
+    // Face the aim direction
+    if (fabsf(aimDir.x) > 0.0001f || fabsf(aimDir.y) > 0.0001f)
+        player.rotation = atan2f(aimDir.y, aimDir.x) * RAD2DEG;
 }
 
 Vector2 GetAimDirection(const Player &player)
