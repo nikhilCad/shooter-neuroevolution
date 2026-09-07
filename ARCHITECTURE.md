@@ -7,6 +7,14 @@
 - no ML libraries. neural net and genetic algorithm are both hand-rolled
 - std::thread for the sweep, nothing else external
 
+## ML approach
+
+- neuroevolution, not gradient-based RL. no backprop, no loss function, no policy gradient.
+- a genome is just a neural net's weight vector. selection + mutation on weights IS the training.
+- (μ+λ) evolution strategy: elites copied unchanged each generation, rest are mutated clones + a few random immigrants.
+- fitness = reward from actually playing the episode (survival + hits + kills - death penalty).
+- mutation strength auto-ramps up when fitness stalls, back down once it improves.
+
 ## Files
 
 **main.cpp** — entry point. picks `--sweep` or the interactive loop. owns the window, HUD, speed button, autosave timing.

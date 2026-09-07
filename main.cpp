@@ -47,7 +47,7 @@ int main(int argc, char **argv)
     // Fast-forward control: cycles through these multipliers, running that many
     // fixed-timestep simulation steps per rendered frame so training speeds up
     // without breaking bullet/enemy collisions.
-    static const int SPEED_LEVELS[] = {1, 2, 16, 128, 512, 4096, 49152};
+    static const int SPEED_LEVELS[] = {1, 2, 16, 128, 512, 4096, 49152, 100152};
     static const int SPEED_LEVEL_COUNT = sizeof(SPEED_LEVELS) / sizeof(SPEED_LEVELS[0]);
     int speedLevelIndex = 0;
     Rectangle speedButtonRect = {(float)screenWidth - 130.0f, 40.0f, 120.0f, 30.0f};
@@ -124,7 +124,7 @@ int main(int argc, char **argv)
         {
             DrawRectangle(0, 0, screenWidth, screenHeight, Fade(RAYWHITE, 0.92f));
             DrawGenerationHistoryPanels(screenWidth, evolution,
-                                         TextFormat("Generation history (%d completed)", (int)evolution.fitnessHistory.size()));
+                                        TextFormat("Generation history (%d completed)", (int)evolution.fitnessHistory.size()));
         }
 
         EndDrawing();
