@@ -12,8 +12,18 @@ void DrawHistoryGraph(Rectangle area, const std::vector<float> &history, const c
     DrawRectangleRec(area, Fade(BLACK, 0.05f));
     DrawRectangleLinesEx(area, 1, DARKGRAY);
     DrawText(label, (int)area.x + 6, (int)area.y + 4, 16, BLACK);
-    DrawText("value", (int)area.x + area.width - 90, (int)area.y + 4, 14, color);
-    DrawText("best so far", (int)area.x + area.width - 40, (int)area.y + 4, 14, maxColor);
+
+    // Right-align both legend labels using their actual measured width, so
+    // "best so far" (the longer string) never overflows past the panel edge.
+    const int legendFontSize = 14;
+    const int legendGap = 10;
+    const int legendMargin = 6;
+    int bestLabelWidth = MeasureText("best so far", legendFontSize);
+    int valueLabelWidth = MeasureText("value", legendFontSize);
+    int bestX = (int)(area.x + area.width) - legendMargin - bestLabelWidth;
+    int valueX = bestX - legendGap - valueLabelWidth;
+    DrawText("value", valueX, (int)area.y + 4, legendFontSize, color);
+    DrawText("best so far", bestX, (int)area.y + 4, legendFontSize, maxColor);
 
     if (history.size() < 2)
     {

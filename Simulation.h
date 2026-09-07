@@ -56,13 +56,12 @@ static const float REWARD_PER_KILL = 20.0f;
 static const float REWARD_DEATH_PENALTY = 30.0f;
 
 // --- Evolution config (interactive-play defaults; the sweep overrides these) ---
-// pop=60/hidden=12 was the empirical winner of a 6-config sweep (see
-// README.md) — a bigger hidden layer roughly doubles the weight count, which
-// made the mutation-only search plateau hard within a few hundred
-// generations, while more population kept improving throughout.
-static const int POPULATION_SIZE = 60;
-static const int HIDDEN_SIZE = 12;
-static const int ELITE_COUNT = 12;
+// pop=80/hidden=36 was the empirical winner of a 16-config sweep (see
+// README.md): best fitness 3735.7, best score 14700, best time 200.4s —
+// clear of every other combination tried.
+static const int POPULATION_SIZE = 80;
+static const int HIDDEN_SIZE = 36;
+static const int ELITE_COUNT = 16;
 static const float MUTATION_RATE = 0.15f;
 static const float MUTATION_STRENGTH = 0.5f;
 

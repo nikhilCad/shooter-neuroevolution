@@ -1,15 +1,10 @@
 #include "NeuralNetwork.h"
+#include "RandomUtil.h"
 #include <cmath>
 #include <random>
 
 namespace
 {
-    std::mt19937 &RandomEngine()
-    {
-        static std::mt19937 engine(std::random_device{}());
-        return engine;
-    }
-
     int WeightCount(int inputSize, int hiddenSize, int outputSize)
     {
         return inputSize * hiddenSize + hiddenSize + hiddenSize * outputSize + outputSize;
