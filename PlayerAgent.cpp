@@ -20,8 +20,9 @@ std::vector<float> GetPlayerState(const Player &player, const std::vector<Enemy>
         if (!enemy.active)
             continue;
         activeCount++;
-        float dx = enemy.position.x - player.center.x;
-        float dy = enemy.position.y - player.center.y;
+        Vector2 enemyCenter = GetEnemyCenter(enemy);
+        float dx = enemyCenter.x - player.center.x;
+        float dy = enemyCenter.y - player.center.y;
         float distSq = dx * dx + dy * dy;
         if (distSq < nearestDistSq)
         {
@@ -33,8 +34,9 @@ std::vector<float> GetPlayerState(const Player &player, const std::vector<Enemy>
     float maxDist = sqrtf((float)(screenWidth * screenWidth + screenHeight * screenHeight));
     if (nearest != nullptr)
     {
-        state[3] = (nearest->position.x - player.center.x) / screenWidth;
-        state[4] = (nearest->position.y - player.center.y) / screenHeight;
+        Vector2 nearestCenter = GetEnemyCenter(*nearest);
+        state[3] = (nearestCenter.x - player.center.x) / screenWidth;
+        state[4] = (nearestCenter.y - player.center.y) / screenHeight;
         state[5] = sqrtf(nearestDistSq) / maxDist;
         state[6] = (float)nearest->health / (float)nearest->maxHealth;
     }
