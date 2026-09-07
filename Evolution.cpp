@@ -1,5 +1,6 @@
 #include "Evolution.h"
 #include "raylib.h"
+#include "RandomUtil.h"
 #include <algorithm>
 #include <numeric>
 #include <cstdio>
@@ -8,7 +9,7 @@
 namespace
 {
     const uint32_t SAVE_MAGIC = 0x4C4F5645; // 'EVOL'
-    const uint32_t SAVE_VERSION = 6;        // v6: sweep-informed defaults: population 40->60, elites 8->12, hidden layer 24->12
+    const uint32_t SAVE_VERSION = 7;        // v7: 16-config sweep winner: population 60->80, elites 12->16, hidden layer 12->36
 
     template <typename T>
     void WriteValue(FILE *file, const T &value)
@@ -151,7 +152,7 @@ static void EvolvePopulation(Evolution &evo)
     float mutationRate = std::min(evo.mutationRate * stagnationBoost, 0.5f);
     while ((int)nextGeneration.size() < evo.populationSize)
     {
-        int parentIndex = order[GetRandomValue(0, evo.eliteCount - 1)];
+        int parentIndex = order[RandomInt(0, evo.eliteCount - 1)];
         bool exploratory = (nextGeneration.size() % 2) == 0;
         float strength = (exploratory ? evo.mutationStrength * 4.0f : evo.mutationStrength) * stagnationBoost;
         nextGeneration.push_back(MutateNetwork(evo.population[parentIndex], mutationRate, strength));

@@ -1,4 +1,5 @@
 #include "Enemy.h"
+#include "RandomUtil.h"
 #include <cmath>
 
 Enemy SpawnEnemy(int screenWidth, int screenHeight, float size, float speed, int maxHealth)
@@ -11,20 +12,20 @@ Enemy SpawnEnemy(int screenWidth, int screenHeight, float size, float speed, int
     enemy.active = true;
 
     // Spawn at a random position just outside one of the four screen edges
-    int side = GetRandomValue(0, 3); // 0=top, 1=bottom, 2=left, 3=right
+    int side = RandomInt(0, 3); // 0=top, 1=bottom, 2=left, 3=right
     switch (side)
     {
     case 0:
-        enemy.position = {(float)GetRandomValue(0, screenWidth - (int)size), -size};
+        enemy.position = {(float)RandomInt(0, screenWidth - (int)size), -size};
         break;
     case 1:
-        enemy.position = {(float)GetRandomValue(0, screenWidth - (int)size), (float)screenHeight};
+        enemy.position = {(float)RandomInt(0, screenWidth - (int)size), (float)screenHeight};
         break;
     case 2:
-        enemy.position = {-size, (float)GetRandomValue(0, screenHeight - (int)size)};
+        enemy.position = {-size, (float)RandomInt(0, screenHeight - (int)size)};
         break;
     default:
-        enemy.position = {(float)screenWidth, (float)GetRandomValue(0, screenHeight - (int)size)};
+        enemy.position = {(float)screenWidth, (float)RandomInt(0, screenHeight - (int)size)};
         break;
     }
     return enemy;
