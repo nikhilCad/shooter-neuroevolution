@@ -13,10 +13,15 @@ struct SweepOptions
     float eliteRatio = 0.2f;
     float mutationRate = MUTATION_RATE;
     float mutationStrength = MUTATION_STRENGTH;
+    // Each config is trained this many times (different random draws) so a
+    // single lucky/unlucky run can't be mistaken for a config's real merit —
+    // the sweep reports the median (and mean) across the repeats.
+    int repeatCount = 4;
 };
 
 // Recognized flags: --populations=20,40,60  --hidden=12,24  --generations=4000
 //                    --elite-ratio=0.2  --mutation-rate=0.15  --mutation-strength=0.5
+//                    --repeats=4
 SweepOptions ParseSweepOptions(int argc, char **argv);
 
 // Runs every (population size x hidden size) combination back-to-back, each
