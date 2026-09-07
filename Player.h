@@ -14,7 +14,9 @@ struct Player
 };
 
 Player CreatePlayer(Vector2 startCenter, float size, float speed, int maxHealth, float gunLength, float gunWidth);
-void UpdatePlayer(Player &player, float deltaTime, int screenWidth, int screenHeight);
+// Moves the player by moveDir (roughly unit length) and turns it to face aimDir,
+// clamping it inside the screen. Both directions come from the controlling agent.
+void UpdatePlayer(Player &player, Vector2 moveDir, Vector2 aimDir, float deltaTime, int screenWidth, int screenHeight);
 void DrawPlayer(const Player &player);
 Rectangle GetPlayerRect(const Player &player);
 Vector2 GetAimDirection(const Player &player);
