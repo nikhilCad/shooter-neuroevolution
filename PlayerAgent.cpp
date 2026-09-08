@@ -47,6 +47,8 @@ std::vector<float> GetPlayerState(const Player &player, const std::vector<Enemy>
             state[base + 1] = (enemyCenter.y - player.center.y) / screenHeight;
             state[base + 2] = sqrtf(distances[slot].distSq) / maxDist;
             state[base + 3] = (float)enemy.health / (float)enemy.maxHealth;
+            state[base + 4] = enemy.velocity.x / screenWidth;
+            state[base + 5] = enemy.velocity.y / screenHeight;
         }
         else
         {

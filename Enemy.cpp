@@ -7,6 +7,7 @@ Enemy SpawnEnemy(int screenWidth, int screenHeight, float size, float speed, int
     Enemy enemy;
     enemy.size = size;
     enemy.speed = speed;
+    enemy.velocity = {0.0f, 0.0f};
     enemy.health = maxHealth;
     enemy.maxHealth = maxHealth;
     enemy.active = true;
@@ -42,8 +43,9 @@ void UpdateEnemy(Enemy &enemy, float deltaTime, Vector2 targetCenter)
         direction.x /= length;
         direction.y /= length;
     }
-    enemy.position.x += direction.x * enemy.speed * deltaTime;
-    enemy.position.y += direction.y * enemy.speed * deltaTime;
+    enemy.velocity = {direction.x * enemy.speed, direction.y * enemy.speed};
+    enemy.position.x += enemy.velocity.x * deltaTime;
+    enemy.position.y += enemy.velocity.y * deltaTime;
 }
 
 void DrawEnemy(const Enemy &enemy)

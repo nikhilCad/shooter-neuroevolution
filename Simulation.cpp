@@ -8,7 +8,8 @@ void ResetEpisode(Episode &episode, Player &player, std::vector<Bullet> &bullets
                   std::vector<Enemy> &enemies, int screenWidth, int screenHeight)
 {
     player = CreatePlayer({(float)screenWidth / 2, (float)screenHeight / 2},
-                          PLAYER_SIZE, PLAYER_SPEED, PLAYER_MAX_HEALTH, GUN_LENGTH, GUN_WIDTH);
+                          PLAYER_SIZE, PLAYER_SPEED, PLAYER_MAX_HEALTH, GUN_LENGTH, GUN_WIDTH,
+                          PLAYER_TURN_SPEED_DEG_PER_SEC, PLAYER_ACCELERATION);
     bullets.clear();
     enemies.clear();
     episode = Episode{};
@@ -156,13 +157,25 @@ void SimulateStep(float deltaTime, Evolution &evolution, Player &player,
         bool touching = distBefore < player.size / 2.0f + enemy.size / 2.0f;
 
         SeparateCircles(playerCenter, player.size / 2.0f, enemyCenter, enemy.size / 2.0f);
-        player.center = playerCenter;
+
+        // A wall (e.g. a corner) can swallow part of the player's half of the
+        // separation, since the player can't be pushed past the screen edge.
+        // Whatever it swallows, give the enemy the rest instead of leaving
+        // them still overlapped — otherwise a cornered player can end up
+        // pinned in permanent contact, unable to ever separate and taking
+        // touch damage indefinitely.
+        Vector2 clampedPlayerCenter = ClampCenterToScreen(playerCenter, player.size / 2.0f, screenWidth, screenHeight);
+        Vector2 wallLoss = {playerCenter.x - clampedPlayerCenter.x, playerCenter.y - clampedPlayerCenter.y};
+        enemyCenter.x -= wallLoss.x;
+        enemyCenter.y -= wallLoss.y;
+
+        player.center = clampedPlayerCenter;
         enemy.position = {enemyCenter.x - enemy.size / 2.0f, enemyCenter.y - enemy.size / 2.0f};
 
         if (touching && episode.enemyTouchTimer <= 0.0f)
         {
             DamagePlayer(player, (int)ENEMY_TOUCH_DAMAGE);
-            episode.reward -= ENEMY_TOUCH_DAMAGE;
+            episode.reward -= REWARD_ENEMY_TOUCH_PENALTY;
             episode.enemyTouchTimer = ENEMY_TOUCH_COOLDOWN;
         }
     }

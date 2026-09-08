@@ -28,6 +28,11 @@ static const float PLAYER_SPEED = 300.0f;
 static const int PLAYER_MAX_HEALTH = 100;
 static const float GUN_LENGTH = 20.0f;
 static const float GUN_WIDTH = 10.0f;
+// Gun turns to face the aim direction instead of snapping to it instantly.
+static const float PLAYER_TURN_SPEED_DEG_PER_SEC = 540.0f;
+// Velocity eases toward the commanded direction instead of snapping to it;
+// reaches full PLAYER_SPEED from a standstill in ~0.12s.
+static const float PLAYER_ACCELERATION = 2500.0f;
 
 // --- Bullet config ---
 static const float BULLET_RADIUS = 4.0f;
@@ -54,6 +59,10 @@ static const float REWARD_SURVIVE_PER_SECOND = 0.05f;
 static const float REWARD_PER_HIT = 2.0f;
 static const float REWARD_PER_KILL = 20.0f;
 static const float REWARD_DEATH_PENALTY = 30.0f;
+// Kept separate from ENEMY_TOUCH_DAMAGE (which only controls HP loss) and set
+// well above it so bumping into enemies is heavily discouraged even though
+// each individual touch is rate-limited by ENEMY_TOUCH_COOLDOWN.
+static const float REWARD_ENEMY_TOUCH_PENALTY = 25.0f;
 
 // --- Evolution config (interactive-play defaults; the sweep overrides these) ---
 // pop=80/hidden=36 was the empirical winner of a 16-config sweep (see
