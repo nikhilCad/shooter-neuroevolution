@@ -26,6 +26,6 @@ SweepOptions ParseSweepOptions(int argc, char **argv);
 
 // Runs every population size back-to-back, each for options.generationBudget
 // generations, with no visible window. Writes sweep_results.txt, one PNG per
-// config under sweep_images/, and an auto-generated README.md tying it all
+// config under sweep_images/, and an auto-generated RESULTS.md tying it all
 // together.
 void RunParameterSweep(const SweepOptions &options);
