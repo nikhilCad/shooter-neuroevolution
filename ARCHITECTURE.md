@@ -21,7 +21,7 @@
 
 The brain is a NEAT genome evaluated as a feed-forward graph (topological evaluation with memoization — see `Activate` in [Genome.cpp](Genome.cpp)), not a fixed dense layer. Hidden nodes only exist if mutation has grown them; a brand new genome has none. Sizes are computed from `PLAYER_AGENT_*` constants in [PlayerAgent.h](PlayerAgent.h), so they always match what `GetPlayerState`/`DecidePlayerAction` in [PlayerAgent.cpp](PlayerAgent.cpp) actually build/decode.
 
-**Inputs — 34 total** (`PLAYER_AGENT_INPUT_SIZE`): 9 player features, 6 features for each of the 4 nearest enemies (closest first), 1 aggregate feature.
+**Inputs — 40 total** (`PLAYER_AGENT_INPUT_SIZE`): 10 player features, 7 features for each of the 4 nearest enemies (closest first), 2 aggregate features.
 
 | # | Feature | Normalization |
 |---|---|---|
@@ -34,13 +34,15 @@ The brain is a NEAT genome evaluated as a feed-forward graph (topological evalua
 | 6 | facing sin | `GetAimDirection(player).y` |
 | 7 | nearest x-wall distance | `/ (screenWidth / 2)`, 0 = touching, 1 = center |
 | 8 | nearest y-wall distance | `/ (screenHeight / 2)`, 0 = touching, 1 = center |
-| 9–14 | nearest enemy: bodyX, bodyY, distance, health, bodyVX, bodyVY | position/velocity rotated into the player's facing frame (see below), `/ screen diagonal`; health `/ maxHealth` |
-| 15–20 | 2nd-nearest enemy: same 6 features | same |
-| 21–26 | 3rd-nearest enemy: same 6 features | same |
-| 27–32 | 4th-nearest enemy: same 6 features | same |
-| 33 | active enemy count | `min(count / 10, 1.0)` |
+| 9 | touch-damage cooldown remaining | `episode.enemyTouchTimer / ENEMY_TOUCH_COOLDOWN`, clamped to [0,1] |
+| 10–16 | nearest enemy: bodyX, bodyY, distance, health, bodyVX, bodyVY, closing speed | position/velocity rotated into the player's facing frame (see below), `/ screen diagonal`; health `/ maxHealth`; closing speed `/ enemy.speed` |
+| 17–23 | 2nd-nearest enemy: same 7 features | same |
+| 24–30 | 3rd-nearest enemy: same 7 features | same |
+| 31–37 | 4th-nearest enemy: same 7 features | same |
+| 38 | active enemy count | `min(count / 10, 1.0)` |
+| 39 | nearby enemy count (within `PLAYER_AGENT_LOCAL_THREAT_RADIUS`) | `min(count / 5, 1.0)` |
 
-Enemy position and velocity are rotated by `-player.rotation` before being fed in, so `bodyX` is "how far ahead of my gun" and `bodyY` is "how far to the side" — a direct aim-error signal that doesn't depend on which way the player happens to be facing. An empty enemy slot (fewer than 4 enemies alive) zeroes its 6 features except distance, which is set to `1.0` ("maximally far away") so the network can tell "no enemy here" apart from "an enemy is very close."
+Enemy position and velocity are rotated by `-player.rotation` before being fed in, so `bodyX` is "how far ahead of my gun" and `bodyY` is "how far to the side" — a direct aim-error signal that doesn't depend on which way the player happens to be facing. Closing speed is the component of the enemy's velocity aimed straight at the player (positive = approaching), which a fast-but-distant enemy can score higher on than a slow-but-close one — a distinction raw distance and body-frame velocity don't capture on their own. An empty enemy slot (fewer than 4 enemies alive) zeroes its 7 features except distance, which is set to `1.0` ("maximally far away") so the network can tell "no enemy here" apart from "an enemy is very close." The nearby-enemy-count aggregate is a localized "am I currently surrounded" signal, distinct from the total-active-count aggregate which counts everything on screen regardless of proximity.
 
 **Outputs — 5 total** (`PLAYER_AGENT_OUTPUT_SIZE`), decoded in `DecidePlayerAction`:
 
@@ -56,14 +58,14 @@ If both aim outputs are ~0, the player keeps its current facing rather than snap
 
 ```mermaid
 flowchart LR
-    subgraph Inputs["Input layer — 34 nodes"]
+    subgraph Inputs["Input layer — 40 nodes"]
         direction TB
-        P["Player — 9<br/>x, y, health, vx, vy,<br/>facing cos/sin, wall dist x/y"]
-        E0["Nearest enemy #1 — 6<br/>bodyX, bodyY, dist, health, bodyVX, bodyVY"]
-        E1["Nearest enemy #2 — 6"]
-        E2["Nearest enemy #3 — 6"]
-        E3["Nearest enemy #4 — 6"]
-        C["Active enemy count — 1"]
+        P["Player — 10<br/>x, y, health, vx, vy,<br/>facing cos/sin, wall dist x/y,<br/>touch-cooldown remaining"]
+        E0["Nearest enemy #1 — 7<br/>bodyX, bodyY, dist, health,<br/>bodyVX, bodyVY, closing speed"]
+        E1["Nearest enemy #2 — 7"]
+        E2["Nearest enemy #3 — 7"]
+        E3["Nearest enemy #4 — 7"]
+        C["Active count + nearby count — 2"]
     end
     Inputs --> G["Hidden structure — grows from zero<br/>via MutateAddNode/MutateAddConnection"]
     G --> Outputs
@@ -100,11 +102,13 @@ Each species' offspring count is proportional to its total fitness-shared fitnes
 
 ## Files
 
-**main.cpp** — entry point. picks `--sweep` or the interactive loop. owns the window, HUD, speed button, autosave timing.
+**main.cpp** — entry point. picks `--sweep` or the interactive loop. owns the window, HUD, speed button, autosave timing. Hold Tab for the fitness/score/time graphs, hold N for the currently-playing genome's network diagram.
 
 **Simulation.h/.cpp** — all the game constants (player/bullet/enemy/reward/evolution defaults) and `SimulateStep`, one game tick: movement, shooting, collisions, reward, episode end. Used by both interactive play and the sweep.
 
-**Player.h/.cpp, Enemy.h/.cpp** — plain structs + free functions, no classes. position, health, collision boxes, drawing.
+**Player.h/.cpp, Enemy.h/.cpp** — plain structs + free functions, no classes. position, health, collision boxes, drawing. Enemies spawn at a random angle around the player's *current* position at a fixed radius, not at a random point along a fixed screen edge — a fixed-radius-from-player spawn means hiding in a corner doesn't increase the average spawn-to-player travel distance the way a fixed-screen-edge spawn did, which was making corner-camping an easy way to thin out how many enemies are in range at once.
+
+**GenomeVisualizer.h/.cpp** — `DrawGenomeVisualization`, the node-link diagram of a genome's structure (inputs/bias left, outputs right, hidden nodes laid out by depth in between) shown by the N-key HUD overlay.
 
 **Genome.h/.cpp** — the NEAT genome: node/connection genes, innovation tracking, mutation (weights, add-connection, add-node), crossover, `GeneticDistance`, and `Activate` (the feed-forward graph evaluator that replaces a fixed dense-layer forward pass).
 

@@ -8,7 +8,7 @@
 namespace
 {
     const uint32_t SAVE_MAGIC = 0x4C4F5645; // 'EVOL'
-    const uint32_t SAVE_VERSION = 9;        // v9: NEAT rewrite — variable-topology genomes replace the fixed dense network
+    const uint32_t SAVE_VERSION = 10;       // v10: added touch-cooldown, per-enemy closing speed, and local-threat-count inputs
 
     // Genomes below this GeneticDistance of a species' representative belong
     // to that species. Standard NEAT-paper-ish default; not swept/tuned here.

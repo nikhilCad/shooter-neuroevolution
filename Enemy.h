@@ -12,7 +12,11 @@ struct Enemy
     bool active;
 };
 
-Enemy SpawnEnemy(int screenWidth, int screenHeight, float size, float speed, int maxHealth);
+// Spawns at a random angle around playerCenter, at a fixed radius (half the
+// screen diagonal) — not at a random point along a fixed screen edge — so
+// hiding in a corner doesn't increase the average spawn-to-player travel
+// distance and thin out how many enemies are simultaneously in range.
+Enemy SpawnEnemy(Vector2 playerCenter, int screenWidth, int screenHeight, float size, float speed, int maxHealth);
 void UpdateEnemy(Enemy &enemy, float deltaTime, Vector2 targetCenter);
 void DrawEnemy(const Enemy &enemy);
 Rectangle GetEnemyRect(const Enemy &enemy);

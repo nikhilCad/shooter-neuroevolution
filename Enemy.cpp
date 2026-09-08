@@ -2,7 +2,7 @@
 #include "RandomUtil.h"
 #include <cmath>
 
-Enemy SpawnEnemy(int screenWidth, int screenHeight, float size, float speed, int maxHealth)
+Enemy SpawnEnemy(Vector2 playerCenter, int screenWidth, int screenHeight, float size, float speed, int maxHealth)
 {
     Enemy enemy;
     enemy.size = size;
@@ -12,23 +12,17 @@ Enemy SpawnEnemy(int screenWidth, int screenHeight, float size, float speed, int
     enemy.maxHealth = maxHealth;
     enemy.active = true;
 
-    // Spawn at a random position just outside one of the four screen edges
-    int side = RandomInt(0, 3); // 0=top, 1=bottom, 2=left, 3=right
-    switch (side)
-    {
-    case 0:
-        enemy.position = {(float)RandomInt(0, screenWidth - (int)size), -size};
-        break;
-    case 1:
-        enemy.position = {(float)RandomInt(0, screenWidth - (int)size), (float)screenHeight};
-        break;
-    case 2:
-        enemy.position = {-size, (float)RandomInt(0, screenHeight - (int)size)};
-        break;
-    default:
-        enemy.position = {(float)screenWidth, (float)RandomInt(0, screenHeight - (int)size)};
-        break;
-    }
+    // Spawn at a uniformly random angle around the player, at a fixed radius
+    // — roughly "just outside the screen" for a centered player, and the
+    // same distance no matter where the player currently is. A fixed radius
+    // tied to the player (rather than a fixed point on the screen edge)
+    // means a player hiding in a corner doesn't get a free pass of longer
+    // average travel time before enemies arrive.
+    float spawnRadius = 0.5f * sqrtf((float)(screenWidth * screenWidth + screenHeight * screenHeight));
+    float angleDeg = (float)RandomInt(0, 3599) / 10.0f; // 0.1-degree resolution is plenty here
+    float angle = angleDeg * DEG2RAD;
+    Vector2 center = {playerCenter.x + cosf(angle) * spawnRadius, playerCenter.y + sinf(angle) * spawnRadius};
+    enemy.position = {center.x - size / 2.0f, center.y - size / 2.0f};
     return enemy;
 }
 
