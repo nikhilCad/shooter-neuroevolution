@@ -39,10 +39,10 @@ The brain is a NEAT genome evaluated as a feed-forward graph (topological evalua
 | 17–23 | 2nd-nearest enemy: same 7 features | same |
 | 24–30 | 3rd-nearest enemy: same 7 features | same |
 | 31–37 | 4th-nearest enemy: same 7 features | same |
-| 38 | active enemy count | `min(count / 10, 1.0)` |
-| 39 | nearby enemy count (within `PLAYER_AGENT_LOCAL_THREAT_RADIUS`) | `min(count / 5, 1.0)` |
+| 38 | nearby enemy count (within `PLAYER_AGENT_LOCAL_THREAT_RADIUS`) | `min(count / 5, 1.0)` |
+| 39 | forward-cone enemy count (within `PLAYER_AGENT_FORWARD_CONE_COS` of the aim direction) | `min(count / 3, 1.0)` |
 
-Enemy position and velocity are rotated by `-player.rotation` before being fed in, so `bodyX` is "how far ahead of my gun" and `bodyY` is "how far to the side" — a direct aim-error signal that doesn't depend on which way the player happens to be facing. Closing speed is the component of the enemy's velocity aimed straight at the player (positive = approaching), which a fast-but-distant enemy can score higher on than a slow-but-close one — a distinction raw distance and body-frame velocity don't capture on their own. An empty enemy slot (fewer than 4 enemies alive) zeroes its 7 features except distance, which is set to `1.0` ("maximally far away") so the network can tell "no enemy here" apart from "an enemy is very close." The nearby-enemy-count aggregate is a localized "am I currently surrounded" signal, distinct from the total-active-count aggregate which counts everything on screen regardless of proximity.
+Enemy position and velocity are rotated by `-player.rotation` before being fed in, so `bodyX` is "how far ahead of my gun" and `bodyY` is "how far to the side" — a direct aim-error signal that doesn't depend on which way the player happens to be facing. Closing speed is the component of the enemy's velocity aimed straight at the player (positive = approaching), which a fast-but-distant enemy can score higher on than a slow-but-close one — a distinction raw distance and body-frame velocity don't capture on their own. An empty enemy slot (fewer than 4 enemies alive) zeroes its 7 features except distance, which is set to `1.0` ("maximally far away") so the network can tell "no enemy here" apart from "an enemy is very close." The nearby-enemy-count aggregate is a localized "am I currently surrounded" signal; the forward-cone-count aggregate is a "would committing to this aim direction actually line up a shot" signal, checked against every active enemy (not just the 4 detailed slots) since a lined-up enemy further out still matters for that decision.
 
 **Outputs — 5 total** (`PLAYER_AGENT_OUTPUT_SIZE`), decoded in `DecidePlayerAction`:
 
@@ -65,7 +65,7 @@ flowchart LR
         E1["Nearest enemy #2 — 7"]
         E2["Nearest enemy #3 — 7"]
         E3["Nearest enemy #4 — 7"]
-        C["Active count + nearby count — 2"]
+        C["Nearby count + forward-cone count — 2"]
     end
     Inputs --> G["Hidden structure — grows from zero<br/>via MutateAddNode/MutateAddConnection"]
     G --> Outputs
@@ -108,17 +108,19 @@ Each species' offspring count is proportional to its total fitness-shared fitnes
 
 **Player.h/.cpp, Enemy.h/.cpp** — plain structs + free functions, no classes. position, health, collision boxes, drawing. Enemies spawn at a random angle around the player's *current* position at a fixed radius, not at a random point along a fixed screen edge — a fixed-radius-from-player spawn means hiding in a corner doesn't increase the average spawn-to-player travel distance the way a fixed-screen-edge spawn did, which was making corner-camping an easy way to thin out how many enemies are in range at once.
 
-**GenomeVisualizer.h/.cpp** — `DrawGenomeVisualization`, the node-link diagram of a genome's structure (inputs/bias left, outputs right, hidden nodes laid out by depth in between) shown by the N-key HUD overlay.
+**GenomeVisualizer.h/.cpp** — `DrawGenomeVisualization`, the node-link diagram of a genome's structure (inputs/bias left, outputs right, hidden nodes laid out by depth in between) shown by the N-key HUD overlay. `ExportGenomeVisualizationImage` renders the same diagram to a PNG (same offscreen-texture approach as `HistoryGraph`'s image export) — used by the sweep to save the fittest genome's diagram.
 
 **Genome.h/.cpp** — the NEAT genome: node/connection genes, innovation tracking, mutation (weights, add-connection, add-node), crossover, `GeneticDistance`, and `Activate` (the feed-forward graph evaluator that replaces a fixed dense-layer forward pass).
 
 **PlayerAgent.h/.cpp** — glue between game state and the network. builds the input vector (player + 4 nearest enemies, enemy features rotated into the player's facing frame), decodes outputs into move/aim/shoot.
 
-**Evolution.h/.cpp** — population, speciation, per-species reproduction (crossover + mutation), stagnation-triggered mutation/structural-mutation boost. save/load to `save.dat` — versioned, deliberately refuses to load a file with the wrong shape (species aren't persisted — they're cheap to rebuild from scratch on the first generation after a resume).
+**Evolution.h/.cpp** — population, speciation, per-species reproduction (crossover + mutation), stagnation-triggered mutation/structural-mutation boost. save/load to `save.dat` — versioned, deliberately refuses to load a file with the wrong shape (species aren't persisted — they're cheap to rebuild from scratch on the first generation after a resume). Also tracks (and persists) per-generation diagnostics beyond the fitness/score/time graphs: `speciesCountHistory`, `avgHiddenNodeCountHistory`/`avgConnectionCountHistory` (population-average genome complexity), and `maxStagnantGenerationsEver` (how deep the anti-stagnation mechanism ever had to dig) — not shown on any HUD graph yet, just reported by the sweep.
 
 **HistoryGraph.h/.cpp** — the fitness/score/time line graphs. same drawing code renders the in-game Tab overlay and the sweep's exported PNGs.
 
 **ParameterSweep.h/.cpp** — `--sweep` mode. CLI flag parsing, writes `sweep_results.txt` + `RESULTS.md` + `sweep_images/`. Two levels of parallelism, sized to never oversubscribe the machine: outer worker threads each run one whole `(config, repeat)` training run to completion (`RunConfigsInParallel`), and within each run, every genome in a generation is independent until fitness is aggregated, so `RunSweepConfig` fans a whole generation's `PlayEpisode` calls out across inner threads too. The inner thread budget is `hardware_concurrency() / outer thread count`, so a sweep with enough `(config, repeat)` tasks to already saturate every core gets an inner budget of 1 (pure outer parallelism, unchanged from before), while a sweep with only one or two tasks — which used to leave most cores idle — puts the rest of the machine to work inside that single run instead.
+
+`RunParameterSweep` also computes an **input-usage report** (`ComputeInputUsageStats`): average `|weight|` of enabled connections from each real input, across every genome in every config/repeat's *final* population, aggregated over the whole sweep — a rough "does the evolved population actually use this input" signal, written to `RESULTS.md` as a full ranked table plus a most/least-relied-on callout. It also finds the single fittest genome across the entire sweep and exports its network diagram (`GenomeVisualizer`'s `ExportGenomeVisualizationImage`) as `sweep_images/fittest_genome.png`, embedded in `RESULTS.md`, alongside that run's diagnostics: the fittest episode's reward broken down by source (survival/hits/kills/touch-penalty/death-penalty — `RunSweepConfig` tracks this exact episode's `EpisodeOutcome`, not a replay under new RNG draws), shot accuracy, species count, population complexity, and peak stagnation depth (all read straight from that run's `Evolution` history fields).
 
 **RandomUtil.h** — thread-local RNG. exists because the sweep runs configs in parallel and raylib's `GetRandomValue` isn't thread-safe.
 

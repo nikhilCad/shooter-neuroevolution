@@ -1,6 +1,7 @@
 #include "PlayerAgent.h"
-#include <cmath>
 #include <algorithm>
+#include <cmath>
+#include <cstdio>
 
 namespace
 {
@@ -45,6 +46,7 @@ std::vector<float> GetPlayerState(const Player &player, const std::vector<Enemy>
     std::vector<EnemyDistance> distances;
     distances.reserve(enemies.size());
     int nearbyCount = 0;
+    int forwardConeCount = 0;
     for (const auto &enemy : enemies)
     {
         if (!enemy.active)
@@ -56,6 +58,15 @@ std::vector<float> GetPlayerState(const Player &player, const std::vector<Enemy>
         distances.push_back({distSq, &enemy});
         if (distSq <= PLAYER_AGENT_LOCAL_THREAT_RADIUS * PLAYER_AGENT_LOCAL_THREAT_RADIUS)
             nearbyCount++;
+
+        // cos(angle between facing and direction-to-enemy) = forward-projected
+        // component / distance — no need for atan2/acos, just the projection
+        // we already compute per-enemy below, done here against every active
+        // enemy (not just the 4 nearest) since a lined-up enemy far away still
+        // matters for "is committing to this aim direction worth it."
+        float dist = sqrtf(distSq);
+        if (dist > 0.0001f && (dx * facing.x + dy * facing.y) / dist > PLAYER_AGENT_FORWARD_CONE_COS)
+            forwardConeCount++;
     }
     std::sort(distances.begin(), distances.end(), [](const EnemyDistance &a, const EnemyDistance &b)
               { return a.distSq < b.distSq; });
@@ -103,11 +114,13 @@ std::vector<float> GetPlayerState(const Player &player, const std::vector<Enemy>
     }
 
     int aggregateBase = PLAYER_AGENT_PLAYER_FEATURE_COUNT + PLAYER_AGENT_NEAREST_ENEMY_COUNT * PLAYER_AGENT_FEATURES_PER_ENEMY;
-    state[aggregateBase + 0] = std::min((float)distances.size() / 10.0f, 1.0f);
     // Nearby-enemy count is naturally small (the 4 detailed slots already
-    // cover most "surrounded" cases) — normalize by a smaller cap than the
-    // total-active-count aggregate above so it actually uses its range.
-    state[aggregateBase + 1] = std::min((float)nearbyCount / 5.0f, 1.0f);
+    // cover most "surrounded" cases) — normalize by a small cap so it
+    // actually uses its range.
+    state[aggregateBase + 0] = std::min((float)nearbyCount / 5.0f, 1.0f);
+    // A narrow 20-degree cone naturally holds fewer enemies than the full
+    // local-threat radius above, so it gets its own (smaller) cap too.
+    state[aggregateBase + 1] = std::min((float)forwardConeCount / 3.0f, 1.0f);
 
     return state;
 }
@@ -127,4 +140,36 @@ PlayerAction DecidePlayerAction(const Genome &brain, const Player &player,
     action.shoot = (1.0f / (1.0f + expf(-output[4]))) > 0.5f;
 
     return action;
+}
+
+const char *PlayerAgentInputLabel(int index)
+{
+    static const char *PLAYER_FEATURE_LABELS[] = {
+        "player.x", "player.y", "player.health", "player.velocityX", "player.velocityY",
+        "player.facingCos", "player.facingSin", "player.wallDistX", "player.wallDistY",
+        "player.touchCooldown"};
+    static const char *ENEMY_FEATURE_LABELS[] = {
+        "bodyX", "bodyY", "distance", "health", "bodyVX", "bodyVY", "closingSpeed"};
+    static const char *AGGREGATE_LABELS[] = {"nearbyEnemyCount", "forwardConeEnemyCount"};
+
+    if (index < PLAYER_AGENT_PLAYER_FEATURE_COUNT)
+        return PLAYER_FEATURE_LABELS[index];
+
+    int enemyBase = PLAYER_AGENT_PLAYER_FEATURE_COUNT;
+    int enemyRegionSize = PLAYER_AGENT_NEAREST_ENEMY_COUNT * PLAYER_AGENT_FEATURES_PER_ENEMY;
+    if (index < enemyBase + enemyRegionSize)
+    {
+        int offset = index - enemyBase;
+        int slot = offset / PLAYER_AGENT_FEATURES_PER_ENEMY;
+        int feature = offset % PLAYER_AGENT_FEATURES_PER_ENEMY;
+        thread_local char buffer[64]; // thread_local so concurrent callers (the sweep runs multi-threaded) never race on it
+        snprintf(buffer, sizeof(buffer), "enemy#%d.%s", slot + 1, ENEMY_FEATURE_LABELS[feature]);
+        return buffer;
+    }
+
+    int aggregateIndex = index - (enemyBase + enemyRegionSize);
+    if (aggregateIndex >= 0 && aggregateIndex < PLAYER_AGENT_AGGREGATE_FEATURE_COUNT)
+        return AGGREGATE_LABELS[aggregateIndex];
+
+    return "?";
 }

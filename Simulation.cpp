@@ -59,7 +59,9 @@ bool SimulateStep(float deltaTime, const Genome &brain, Player &player,
                   std::vector<Vector2> &killFlashes)
 {
     episode.time += deltaTime;
-    episode.reward += REWARD_SURVIVE_PER_SECOND * deltaTime;
+    float surviveReward = REWARD_SURVIVE_PER_SECOND * deltaTime;
+    episode.reward += surviveReward;
+    episode.rewardSurvival += surviveReward;
 
     float touchCooldownFrac = std::max(0.0f, episode.enemyTouchTimer) / ENEMY_TOUCH_COOLDOWN;
     PlayerAction action = DecidePlayerAction(brain, player, enemies, screenWidth, screenHeight, touchCooldownFrac);
@@ -77,6 +79,7 @@ bool SimulateStep(float deltaTime, const Genome &brain, Player &player,
         bullet.active = true;
         bullets.push_back(bullet);
         episode.shootTimer = SHOOT_COOLDOWN;
+        episode.shotsFired++;
     }
 
     // Update bullets
@@ -126,9 +129,12 @@ bool SimulateStep(float deltaTime, const Genome &brain, Player &player,
                 bullet.active = false;
                 DamageEnemy(enemy, BULLET_DAMAGE);
                 episode.reward += REWARD_PER_HIT;
+                episode.rewardHits += REWARD_PER_HIT;
+                episode.hits++;
                 if (!enemy.active)
                 {
                     episode.reward += REWARD_PER_KILL;
+                    episode.rewardKills += REWARD_PER_KILL;
                     episode.score += SCORE_PER_KILL;
                     // Point-blank kills can spawn, travel, and resolve within a
                     // single fast-forwarded batch of steps and never get drawn
@@ -174,6 +180,7 @@ bool SimulateStep(float deltaTime, const Genome &brain, Player &player,
         {
             DamagePlayer(player, (int)ENEMY_TOUCH_DAMAGE);
             episode.reward -= REWARD_ENEMY_TOUCH_PENALTY;
+            episode.rewardTouchPenalty += REWARD_ENEMY_TOUCH_PENALTY;
             episode.enemyTouchTimer = ENEMY_TOUCH_COOLDOWN;
         }
     }
@@ -195,6 +202,7 @@ bool SimulateStep(float deltaTime, const Genome &brain, Player &player,
     if (player.health <= 0)
     {
         episode.reward -= REWARD_DEATH_PENALTY;
+        episode.rewardDeathPenalty += REWARD_DEATH_PENALTY;
         return true;
     }
     return false;
@@ -216,5 +224,8 @@ EpisodeOutcome PlayEpisode(const Genome &genome, int screenWidth, int screenHeig
         episodeEnded = SimulateStep(SIMULATION_FIXED_DT, genome, player, bullets, enemies,
                                     episode, screenWidth, screenHeight, killFlashes);
     }
-    return {episode.reward, episode.score, episode.time};
+    return {episode.reward, episode.score, episode.time,
+            episode.rewardSurvival, episode.rewardHits, episode.rewardKills,
+            episode.rewardTouchPenalty, episode.rewardDeathPenalty,
+            episode.shotsFired, episode.hits};
 }

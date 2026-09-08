@@ -8,7 +8,7 @@
 namespace
 {
     const uint32_t SAVE_MAGIC = 0x4C4F5645; // 'EVOL'
-    const uint32_t SAVE_VERSION = 10;       // v10: added touch-cooldown, per-enemy closing speed, and local-threat-count inputs
+    const uint32_t SAVE_VERSION = 12;       // v12: replaced activeEnemyCount input with forwardConeEnemyCount
 
     // Genomes below this GeneticDistance of a species' representative belong
     // to that species. Standard NEAT-paper-ish default; not swept/tuned here.
@@ -52,6 +52,29 @@ namespace
         if (count == 0)
             return true;
         return fread(values.data(), sizeof(float), count, file) == count;
+    }
+
+    void WriteIntVector(FILE *file, const std::vector<int> &values)
+    {
+        WriteValue(file, (uint32_t)values.size());
+        for (int v : values)
+            WriteValue(file, (int32_t)v);
+    }
+
+    bool ReadIntVector(FILE *file, std::vector<int> &values)
+    {
+        uint32_t count = 0;
+        if (!ReadValue(file, count))
+            return false;
+        values.resize(count);
+        for (uint32_t i = 0; i < count; i++)
+        {
+            int32_t v = 0;
+            if (!ReadValue(file, v))
+                return false;
+            values[i] = v;
+        }
+        return true;
     }
 
     void WriteGenome(FILE *file, const Genome &genome)
@@ -302,6 +325,7 @@ namespace
                                    ? thisGenBest
                                    : evo.recentBestTrend * 0.9f + thisGenBest * 0.1f;
         evo.stagnantGenerations = improved ? 0 : evo.stagnantGenerations + 1;
+        evo.maxStagnantGenerationsEver = std::max(evo.maxStagnantGenerationsEver, evo.stagnantGenerations);
 
         // Ramps from 1x (no boost) up to 2x over the first ~50 stagnant
         // generations, then keeps climbing (much more slowly) up to 6x by
@@ -311,6 +335,22 @@ namespace
 
         SpeciatePopulation(evo);
         UpdateSpeciesStagnation(evo);
+
+        evo.speciesCountHistory.push_back((int)evo.species.size());
+        {
+            long long totalHidden = 0, totalConnections = 0;
+            for (const Genome &g : evo.population)
+            {
+                for (const auto &n : g.nodes)
+                    if (n.type == NodeType::Hidden)
+                        totalHidden++;
+                for (const auto &c : g.connections)
+                    if (c.enabled)
+                        totalConnections++;
+            }
+            evo.avgHiddenNodeCountHistory.push_back((float)totalHidden / (float)evo.population.size());
+            evo.avgConnectionCountHistory.push_back((float)totalConnections / (float)evo.population.size());
+        }
 
         int bestSpeciesIndex = -1;
         for (int s = 0; s < (int)evo.species.size(); s++)
@@ -472,12 +512,16 @@ bool SaveEvolution(const Evolution &evo, const char *filePath)
     WriteValue(file, evo.bestTimeEver);
     WriteValue(file, (int32_t)evo.stagnantGenerations);
     WriteValue(file, evo.recentBestTrend);
+    WriteValue(file, (int32_t)evo.maxStagnantGenerationsEver);
     WriteValue(file, (int32_t)evo.innovationTracker.nextNodeId);
     WriteValue(file, (int32_t)evo.innovationTracker.nextInnovationNumber);
 
     WriteFloatVector(file, evo.fitnessHistory);
     WriteFloatVector(file, evo.scoreHistory);
     WriteFloatVector(file, evo.timeHistory);
+    WriteIntVector(file, evo.speciesCountHistory);
+    WriteFloatVector(file, evo.avgHiddenNodeCountHistory);
+    WriteFloatVector(file, evo.avgConnectionCountHistory);
 
     WriteFloatVector(file, evo.fitness);
     WriteFloatVector(file, evo.episodeScores);
@@ -505,7 +549,7 @@ bool LoadEvolution(Evolution &evo, const char *filePath)
     if (ok)
     {
         int32_t populationSize = 0, generation = 0, currentGenomeIndex = 0, bestScoreEver = 0;
-        int32_t stagnantGenerations = 0, nextNodeId = 0, nextInnovationNumber = 0;
+        int32_t stagnantGenerations = 0, maxStagnantGenerationsEver = 0, nextNodeId = 0, nextInnovationNumber = 0;
         ok = ok && ReadValue(file, populationSize);
         ok = ok && ReadValue(file, loaded.mutationRate);
         ok = ok && ReadValue(file, loaded.mutationStrength);
@@ -516,12 +560,16 @@ bool LoadEvolution(Evolution &evo, const char *filePath)
         ok = ok && ReadValue(file, loaded.bestTimeEver);
         ok = ok && ReadValue(file, stagnantGenerations);
         ok = ok && ReadValue(file, loaded.recentBestTrend);
+        ok = ok && ReadValue(file, maxStagnantGenerationsEver);
         ok = ok && ReadValue(file, nextNodeId);
         ok = ok && ReadValue(file, nextInnovationNumber);
 
         ok = ok && ReadFloatVector(file, loaded.fitnessHistory);
         ok = ok && ReadFloatVector(file, loaded.scoreHistory);
         ok = ok && ReadFloatVector(file, loaded.timeHistory);
+        ok = ok && ReadIntVector(file, loaded.speciesCountHistory);
+        ok = ok && ReadFloatVector(file, loaded.avgHiddenNodeCountHistory);
+        ok = ok && ReadFloatVector(file, loaded.avgConnectionCountHistory);
 
         ok = ok && ReadFloatVector(file, loaded.fitness);
         ok = ok && ReadFloatVector(file, loaded.episodeScores);
@@ -532,6 +580,7 @@ bool LoadEvolution(Evolution &evo, const char *filePath)
         loaded.currentGenomeIndex = currentGenomeIndex;
         loaded.bestScoreEver = bestScoreEver;
         loaded.stagnantGenerations = stagnantGenerations;
+        loaded.maxStagnantGenerationsEver = maxStagnantGenerationsEver;
         loaded.innovationTracker.nextNodeId = nextNodeId;
         loaded.innovationTracker.nextInnovationNumber = nextInnovationNumber;
 
