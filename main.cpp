@@ -48,7 +48,7 @@ int main(int argc, char **argv)
     // Fast-forward control: cycles through these multipliers, running that many
     // fixed-timestep simulation steps per rendered frame so training speeds up
     // without breaking bullet/enemy collisions.
-    static const int SPEED_LEVELS[] = {1, 2, 16, 4096, 8192, 16384};
+    static const int SPEED_LEVELS[] = {1, 2, 16, 4096, 16384, 65536};
     static const int SPEED_LEVEL_COUNT = sizeof(SPEED_LEVELS) / sizeof(SPEED_LEVELS[0]);
     int speedLevelIndex = 0;
     Rectangle speedButtonRect = {(float)screenWidth - 130.0f, 40.0f, 120.0f, 30.0f};
@@ -75,7 +75,15 @@ int main(int argc, char **argv)
         std::vector<Vector2> killFlashes;
         int stepsThisFrame = SPEED_LEVELS[speedLevelIndex];
         for (int step = 0; step < stepsThisFrame; step++)
-            SimulateStep(SIMULATION_FIXED_DT, evolution, player, bullets, enemies, episode, screenWidth, screenHeight, killFlashes);
+        {
+            bool episodeEnded = SimulateStep(SIMULATION_FIXED_DT, CurrentGenome(evolution), player, bullets, enemies,
+                                             episode, screenWidth, screenHeight, killFlashes);
+            if (episodeEnded)
+            {
+                FinishEpisode(evolution, episode.reward, episode.score, episode.time);
+                ResetEpisode(episode, player, bullets, enemies, screenWidth, screenHeight);
+            }
+        }
 
         // Draw
         BeginDrawing();

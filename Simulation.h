@@ -2,7 +2,7 @@
 #include "raylib.h"
 #include "Player.h"
 #include "Enemy.h"
-#include "Evolution.h"
+#include "Genome.h"
 #include <vector>
 
 struct Bullet
@@ -80,12 +80,35 @@ static const float SIMULATION_FIXED_DT = 1.0f / 60.0f;
 void ResetEpisode(Episode &episode, Player &player, std::vector<Bullet> &bullets,
                   std::vector<Enemy> &enemies, int screenWidth, int screenHeight);
 
-// Advances the simulation by one fixed timestep (SIMULATION_FIXED_DT). Called
-// multiple times per rendered frame when fast-forwarding — or back-to-back
-// with no rendering at all, e.g. by the parameter sweep — so game logic
-// stays deterministic regardless of how many steps run before anything (if
-// anything) gets drawn.
-void SimulateStep(float deltaTime, Evolution &evolution, Player &player,
+// Advances the simulation by one fixed timestep (SIMULATION_FIXED_DT) for a
+// specific genome's episode. Called multiple times per rendered frame when
+// fast-forwarding — or back-to-back with no rendering at all, e.g. by the
+// parameter sweep — so game logic stays deterministic regardless of how many
+// steps run before anything (if anything) gets drawn.
+//
+// Returns true once the episode ends (the player died) — episode.reward/
+// score/time are already finalized (including the death penalty) at that
+// point, but the caller still owns recording that outcome with whatever
+// bookkeeping it's using (e.g. Evolution::FinishEpisode) and resetting for
+// the next episode (ResetEpisode). This function has no dependency on
+// Evolution at all, so it's safe to call from any thread as long as no two
+// threads ever touch the same Genome concurrently (Activate lazily caches
+// per-genome state that isn't synchronized).
+bool SimulateStep(float deltaTime, const Genome &brain, Player &player,
                   std::vector<Bullet> &bullets, std::vector<Enemy> &enemies,
                   Episode &episode, int screenWidth, int screenHeight,
                   std::vector<Vector2> &killFlashes);
+
+struct EpisodeOutcome
+{
+    float fitness;
+    int score;
+    float time;
+};
+
+// Plays one full episode for `genome`, from a fresh spawn to death, entirely
+// self-contained (its own Player/bullets/enemies/Episode state — nothing
+// shared). Safe to call concurrently for different genomes on different
+// threads. Used by the parameter sweep to evaluate a whole generation's
+// population in parallel instead of one genome at a time.
+EpisodeOutcome PlayEpisode(const Genome &genome, int screenWidth, int screenHeight);
