@@ -316,6 +316,9 @@ void RunParameterSweep(const SweepOptions &options)
     if (readme)
     {
         fprintf(readme, "# Parameter Sweep Results\n\n");
+        fprintf(readme, "See [ARCHITECTURE.md](ARCHITECTURE.md) for the current NEAT design. "
+                         "An earlier fixed-topology approach's architecture, sweep results, and graphs are "
+                         "preserved in [archive/v1-fixed-topology/](archive/v1-fixed-topology/) for reference.\n\n");
         fprintf(readme, "## Usage\n\n");
         fprintf(readme, "```\n");
         fprintf(readme, "make dev    # build and play the game interactively\n");
