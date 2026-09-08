@@ -2,6 +2,7 @@
 #include "RandomUtil.h"
 #include <algorithm>
 #include <cmath>
+#include <functional>
 #include <random>
 #include <unordered_set>
 
@@ -96,62 +97,99 @@ Genome CreateMinimalGenome(int inputCount, int outputCount, InnovationTracker &t
 
 namespace
 {
-    float EvaluateNode(int nodeId, const std::unordered_map<int, NodeType> &typeById,
-                        const std::unordered_map<int, std::vector<const ConnectionGene *>> &incomingByNode,
-                        const std::vector<float> &inputs,
-                        std::unordered_map<int, float> &cache, std::unordered_set<int> &inProgress)
+    // Builds genome.compiled* from scratch: a topological ordering of every
+    // node (DFS post-order — inputs/bias naturally end up first since they
+    // have no incoming edges) plus, for each node in that order, its enabled
+    // incoming connections resolved to dense indices. Evaluating dense
+    // indices in increasing order then always sees every dependency's value
+    // already computed, with no recursion or per-tick hashing needed.
+    void BuildCompiledCache(const Genome &genome)
     {
-        auto cached = cache.find(nodeId);
-        if (cached != cache.end())
-            return cached->second;
-        // Should never trigger for a genuinely feed-forward genome — a cheap
-        // safety net against a cycle sneaking in rather than infinite recursion.
-        if (inProgress.count(nodeId))
-            return 0.0f;
+        std::unordered_map<int, NodeType> typeById;
+        typeById.reserve(genome.nodes.size());
+        for (const auto &n : genome.nodes)
+            typeById[n.id] = n.type;
 
-        NodeType type = typeById.at(nodeId);
-        float value;
-        if (type == NodeType::Input)
-            value = inputs[nodeId];
-        else if (type == NodeType::Bias)
-            value = 1.0f;
-        else
+        std::unordered_map<int, std::vector<std::pair<int, float>>> incomingById;
+        for (const auto &c : genome.connections)
+            if (c.enabled)
+                incomingById[c.outNode].push_back({c.inNode, c.weight});
+
+        std::vector<int> order;
+        order.reserve(genome.nodes.size());
+        std::unordered_set<int> visited;
+        std::function<void(int)> visit = [&](int id)
         {
-            inProgress.insert(nodeId);
-            float sum = 0.0f;
-            auto it = incomingByNode.find(nodeId);
-            if (it != incomingByNode.end())
-                for (const ConnectionGene *conn : it->second)
-                    sum += EvaluateNode(conn->inNode, typeById, incomingByNode, inputs, cache, inProgress) * conn->weight;
-            inProgress.erase(nodeId);
-            value = (type == NodeType::Output) ? sum : tanhf(sum);
+            if (!visited.insert(id).second)
+                return;
+            auto it = incomingById.find(id);
+            if (it != incomingById.end())
+                for (const auto &pr : it->second)
+                    visit(pr.first);
+            order.push_back(id);
+        };
+        for (const auto &n : genome.nodes)
+            visit(n.id);
+
+        std::unordered_map<int, int> denseIndexById;
+        denseIndexById.reserve(order.size());
+        for (size_t i = 0; i < order.size(); i++)
+            denseIndexById[order[i]] = (int)i;
+
+        genome.compiledNodeId = order;
+        genome.compiledNodeType.resize(order.size());
+        genome.compiledIncoming.assign(order.size(), {});
+        for (size_t i = 0; i < order.size(); i++)
+        {
+            int id = order[i];
+            genome.compiledNodeType[i] = typeById[id];
+            auto it = incomingById.find(id);
+            if (it != incomingById.end())
+            {
+                genome.compiledIncoming[i].reserve(it->second.size());
+                for (const auto &pr : it->second)
+                    genome.compiledIncoming[i].push_back({denseIndexById[pr.first], pr.second});
+            }
         }
-        cache[nodeId] = value;
-        return value;
+
+        int firstOutputId = genome.inputCount + 1;
+        genome.compiledOutputDenseIndex.resize(genome.outputCount);
+        for (int i = 0; i < genome.outputCount; i++)
+            genome.compiledOutputDenseIndex[i] = denseIndexById[firstOutputId + i];
+
+        genome.compiledValid = true;
     }
 }
 
 std::vector<float> Activate(const Genome &genome, const std::vector<float> &inputs)
 {
-    std::unordered_map<int, NodeType> typeById;
-    typeById.reserve(genome.nodes.size());
-    for (const auto &n : genome.nodes)
-        typeById[n.id] = n.type;
+    if (!genome.compiledValid)
+        BuildCompiledCache(genome);
 
-    std::unordered_map<int, std::vector<const ConnectionGene *>> incomingByNode;
-    for (const auto &c : genome.connections)
-        if (c.enabled)
-            incomingByNode[c.outNode].push_back(&c);
+    size_t nodeCount = genome.compiledNodeId.size();
+    std::vector<float> values(nodeCount, 0.0f);
+    for (size_t i = 0; i < nodeCount; i++)
+    {
+        NodeType type = genome.compiledNodeType[i];
+        if (type == NodeType::Input)
+        {
+            values[i] = inputs[genome.compiledNodeId[i]];
+            continue;
+        }
+        if (type == NodeType::Bias)
+        {
+            values[i] = 1.0f;
+            continue;
+        }
+        float sum = 0.0f;
+        for (const auto &pr : genome.compiledIncoming[i])
+            sum += values[pr.first] * pr.second; // pr.first < i always, guaranteed by topological order
+        values[i] = (type == NodeType::Output) ? sum : tanhf(sum);
+    }
 
-    std::unordered_map<int, float> cache;
-    std::unordered_set<int> inProgress;
-
-    int biasId = genome.inputCount;
-    int firstOutputId = biasId + 1;
-    std::vector<float> outputs;
-    outputs.reserve(genome.outputCount);
+    std::vector<float> outputs(genome.outputCount);
     for (int i = 0; i < genome.outputCount; i++)
-        outputs.push_back(EvaluateNode(firstOutputId + i, typeById, incomingByNode, inputs, cache, inProgress));
+        outputs[i] = values[genome.compiledOutputDenseIndex[i]];
     return outputs;
 }
 
@@ -187,6 +225,7 @@ void MutateAddConnection(Genome &genome, InnovationTracker &tracker)
         std::uniform_real_distribution<float> dist(-1.0f, 1.0f);
         int innovation = GetOrCreateConnectionInnovation(tracker, a.id, b.id);
         genome.connections.push_back({a.id, b.id, dist(RandomEngine()), true, innovation});
+        genome.compiledValid = false; // structure changed — Activate must rebuild its cache
         return;
     }
     // No valid non-cyclic, non-duplicate pair found within the attempt budget — skip.
@@ -231,6 +270,8 @@ void MutateAddNode(Genome &genome, InnovationTracker &tracker)
         genome.connections.push_back({splitInNode, split.newNodeId, 1.0f, true, split.inInnovation});
     if (!outConnPresent)
         genome.connections.push_back({split.newNodeId, splitOutNode, 0.0f, true, split.outInnovation});
+
+    genome.compiledValid = false; // structure changed — Activate must rebuild its cache
 }
 
 Genome Crossover(const Genome &a, float fitnessA, const Genome &b, float fitnessB)

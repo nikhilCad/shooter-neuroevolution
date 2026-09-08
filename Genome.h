@@ -38,6 +38,25 @@ struct Genome
     int outputCount = 0;
     std::vector<NodeGene> nodes;
     std::vector<ConnectionGene> connections;
+
+    // --- Evaluation cache, built lazily by Activate (see Genome.cpp) ---
+    // A genome's structure is fixed for its whole lifetime once constructed:
+    // every mutation that can change nodes/connections (MutateAddConnection,
+    // MutateAddNode) always runs to completion before a genome is ever
+    // Activate()'d for the first time, and both invalidate this cache when
+    // they touch structure. MutateWeights never invalidates it, since
+    // changing a weight doesn't change which nodes exist or how they're
+    // wired — only the numbers looked up during evaluation. Without this,
+    // Activate would have to re-derive topological order and per-node
+    // incoming-connection lists from scratch on every single simulated tick,
+    // which is by far the hottest path in the whole program.
+    // `mutable` because this is a pure implementation-detail cache, not part
+    // of the genome's logical (const-observable) state.
+    mutable bool compiledValid = false;
+    mutable std::vector<int> compiledNodeId;                                  // dense index -> original node id
+    mutable std::vector<NodeType> compiledNodeType;                           // dense index -> type
+    mutable std::vector<std::vector<std::pair<int, float>>> compiledIncoming; // dense index -> (source dense index, weight), topologically before it
+    mutable std::vector<int> compiledOutputDenseIndex;                        // output index -> dense index
 };
 
 struct NodeSplitRecord
