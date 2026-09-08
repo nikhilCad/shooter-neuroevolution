@@ -4,10 +4,17 @@ project(raylib_cpp)
 
 # Default to an optimized build — the evolution sweep is compute-heavy and
 # an unoptimized build makes it dramatically slower. Override with
-# -DCMAKE_BUILD_TYPE=Debug if you need debug symbols.
+# -DCMAKE_BUILD_TYPE=Debug if you need debug symbols. Release already
+# implies -O3 -DNDEBUG on GCC/Clang; on top of that, enable link-time
+# (interprocedural) optimization when the toolchain supports it, so hot
+# cross-file calls like Activate/SimulateStep can still get inlined across
+# translation units.
 if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
 endif()
+
+include(CheckIPOSupported)
+check_ipo_supported(RESULT ipo_supported OUTPUT ipo_error)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -28,3 +35,7 @@ add_executable(raylib_cpp
 )
 
 target_link_libraries(raylib_cpp PRIVATE raylib)
+
+if(ipo_supported)
+    set_property(TARGET raylib_cpp PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
+endif()
