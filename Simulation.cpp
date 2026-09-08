@@ -1,6 +1,5 @@
 #include "Simulation.h"
 #include "PlayerAgent.h"
-#include "Genome.h"
 #include <cmath>
 #include <algorithm>
 
@@ -54,7 +53,7 @@ static void ResolveEnemyEnemyCollisions(std::vector<Enemy> &enemies)
     }
 }
 
-void SimulateStep(float deltaTime, Evolution &evolution, Player &player,
+bool SimulateStep(float deltaTime, const Genome &brain, Player &player,
                   std::vector<Bullet> &bullets, std::vector<Enemy> &enemies,
                   Episode &episode, int screenWidth, int screenHeight,
                   std::vector<Vector2> &killFlashes)
@@ -62,8 +61,6 @@ void SimulateStep(float deltaTime, Evolution &evolution, Player &player,
     episode.time += deltaTime;
     episode.reward += REWARD_SURVIVE_PER_SECOND * deltaTime;
 
-    // The current generation's genome controls the player this episode
-    const Genome &brain = CurrentGenome(evolution);
     float touchCooldownFrac = std::max(0.0f, episode.enemyTouchTimer) / ENEMY_TOUCH_COOLDOWN;
     PlayerAction action = DecidePlayerAction(brain, player, enemies, screenWidth, screenHeight, touchCooldownFrac);
 
@@ -192,12 +189,32 @@ void SimulateStep(float deltaTime, Evolution &evolution, Player &player,
                        { return !e.active; }),
         enemies.end());
 
-    // End the episode only when the player dies, then hand fitness to
-    // evolution and move on to the next genome (or the next generation) live.
+    // End the episode only when the player dies. episode.reward/score/time
+    // are the finished outcome at that point — the caller records it however
+    // it's tracking genomes/generations, then resets for the next episode.
     if (player.health <= 0)
     {
         episode.reward -= REWARD_DEATH_PENALTY;
-        FinishEpisode(evolution, episode.reward, episode.score, episode.time);
-        ResetEpisode(episode, player, bullets, enemies, screenWidth, screenHeight);
+        return true;
     }
+    return false;
+}
+
+EpisodeOutcome PlayEpisode(const Genome &genome, int screenWidth, int screenHeight)
+{
+    Player player;
+    std::vector<Bullet> bullets;
+    std::vector<Enemy> enemies;
+    Episode episode;
+    ResetEpisode(episode, player, bullets, enemies, screenWidth, screenHeight);
+
+    std::vector<Vector2> killFlashes; // discarded — nothing renders a headless episode
+    bool episodeEnded = false;
+    while (!episodeEnded)
+    {
+        killFlashes.clear();
+        episodeEnded = SimulateStep(SIMULATION_FIXED_DT, genome, player, bullets, enemies,
+                                    episode, screenWidth, screenHeight, killFlashes);
+    }
+    return {episode.reward, episode.score, episode.time};
 }

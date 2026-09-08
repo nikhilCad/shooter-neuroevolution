@@ -104,7 +104,7 @@ Each species' offspring count is proportional to its total fitness-shared fitnes
 
 **main.cpp** — entry point. picks `--sweep` or the interactive loop. owns the window, HUD, speed button, autosave timing. Hold Tab for the fitness/score/time graphs, hold N for the currently-playing genome's network diagram.
 
-**Simulation.h/.cpp** — all the game constants (player/bullet/enemy/reward/evolution defaults) and `SimulateStep`, one game tick: movement, shooting, collisions, reward, episode end. Used by both interactive play and the sweep.
+**Simulation.h/.cpp** — all the game constants (player/bullet/enemy/reward/evolution defaults) and `SimulateStep`, one game tick: movement, shooting, collisions, reward, episode end. Takes a genome directly and knows nothing about `Evolution` — it returns whether the episode just ended (the player died) and leaves recording that outcome and resetting for the next episode to the caller. `PlayEpisode` plays one genome through a full episode start-to-finish in its own self-contained state, safe to call from any thread as long as no two threads ever touch the same genome at once (used by the sweep to evaluate a whole generation in parallel).
 
 **Player.h/.cpp, Enemy.h/.cpp** — plain structs + free functions, no classes. position, health, collision boxes, drawing. Enemies spawn at a random angle around the player's *current* position at a fixed radius, not at a random point along a fixed screen edge — a fixed-radius-from-player spawn means hiding in a corner doesn't increase the average spawn-to-player travel distance the way a fixed-screen-edge spawn did, which was making corner-camping an easy way to thin out how many enemies are in range at once.
 
@@ -118,13 +118,14 @@ Each species' offspring count is proportional to its total fitness-shared fitnes
 
 **HistoryGraph.h/.cpp** — the fitness/score/time line graphs. same drawing code renders the in-game Tab overlay and the sweep's exported PNGs.
 
-**ParameterSweep.h/.cpp** — `--sweep` mode. CLI flag parsing, runs configs (population size) across worker threads, writes `sweep_results.txt` + `RESULTS.md` + `sweep_images/`.
+**ParameterSweep.h/.cpp** — `--sweep` mode. CLI flag parsing, writes `sweep_results.txt` + `RESULTS.md` + `sweep_images/`. Two levels of parallelism, sized to never oversubscribe the machine: outer worker threads each run one whole `(config, repeat)` training run to completion (`RunConfigsInParallel`), and within each run, every genome in a generation is independent until fitness is aggregated, so `RunSweepConfig` fans a whole generation's `PlayEpisode` calls out across inner threads too. The inner thread budget is `hardware_concurrency() / outer thread count`, so a sweep with enough `(config, repeat)` tasks to already saturate every core gets an inner budget of 1 (pure outer parallelism, unchanged from before), while a sweep with only one or two tasks — which used to leave most cores idle — puts the rest of the machine to work inside that single run instead.
 
 **RandomUtil.h** — thread-local RNG. exists because the sweep runs configs in parallel and raylib's `GetRandomValue` isn't thread-safe.
 
 ## Why it's split this way
 
 - `SimulateStep` doesn't know or care if anyone's watching — same function runs live in the window at 1x-49152x speed, or headless on a sweep thread.
+- `SimulateStep` also doesn't know or care about `Evolution` — it takes a genome directly and just reports back when an episode ends, instead of reaching into an `Evolution` to find "the current genome" and advance it. That's what lets the sweep play many genomes' episodes on many threads at once (`PlayEpisode`): each thread's game state and genome are its own, with no shared `Evolution` object being mutated concurrently.
 - game logic never calls raylib drawing functions, only `CheckCollisionRecs` (pure math, safe off the main thread).
 - sweep training runs fully parallel with no window at all. the window only opens afterward, on the main thread, to export PNGs — raylib's GL calls aren't thread-safe so that part has to stay single-threaded.
 - `Genome`'s algorithms (mutation, crossover, distance, evaluation) know nothing about the game — `PlayerAgent` is the only file that translates between "player + enemies" and "a vector of floats," so the ML core is reusable for a completely different game with zero changes.

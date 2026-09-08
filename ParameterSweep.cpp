@@ -68,22 +68,51 @@ static std::string SweepConfigLabel(const SweepConfig &config)
     return "pop" + std::to_string(config.populationSize);
 }
 
-static Evolution RunSweepConfig(const SweepConfig &config, int generationBudget, int screenWidth, int screenHeight)
+// Trains one config for generationBudget generations. Every genome in a
+// generation is fully independent until fitness is aggregated, so instead of
+// playing them one at a time, this fans each generation out across up to
+// innerThreadBudget threads (each claiming genome indices off a shared
+// counter and playing that genome's episode in its own local game state via
+// PlayEpisode), then sequentially replays the results into `evolution`
+// through FinishEpisode so its normal per-genome bookkeeping (and the
+// EvolvePopulation it triggers once the whole population's in) is unaffected
+// by however the work was actually scheduled.
+static Evolution RunSweepConfig(const SweepConfig &config, int generationBudget, int screenWidth, int screenHeight,
+                                 unsigned int innerThreadBudget)
 {
     Evolution evolution = CreateEvolution(PLAYER_AGENT_INPUT_SIZE, PLAYER_AGENT_OUTPUT_SIZE,
                                            config.populationSize,
                                            config.mutationRate, config.mutationStrength);
 
-    Player player;
-    std::vector<Bullet> bullets;
-    std::vector<Enemy> enemies;
-    Episode episode;
-    ResetEpisode(episode, player, bullets, enemies, screenWidth, screenHeight);
+    unsigned int threadCount = std::max(1u, std::min(innerThreadBudget, (unsigned int)config.populationSize));
+    std::vector<EpisodeOutcome> outcomes(config.populationSize);
 
     while (evolution.generation <= generationBudget)
     {
-        std::vector<Vector2> killFlashes; // unused outside rendering; discarded here
-        SimulateStep(SIMULATION_FIXED_DT, evolution, player, bullets, enemies, episode, screenWidth, screenHeight, killFlashes);
+        std::atomic<int> nextGenomeIndex{0};
+        auto worker = [&]()
+        {
+            int i;
+            while ((i = nextGenomeIndex.fetch_add(1)) < evolution.populationSize)
+                outcomes[i] = PlayEpisode(evolution.population[i], screenWidth, screenHeight);
+        };
+
+        if (threadCount <= 1)
+        {
+            worker();
+        }
+        else
+        {
+            std::vector<std::thread> workers;
+            workers.reserve(threadCount);
+            for (unsigned int t = 0; t < threadCount; t++)
+                workers.emplace_back(worker);
+            for (auto &w : workers)
+                w.join();
+        }
+
+        for (int i = 0; i < evolution.populationSize; i++)
+            FinishEpisode(evolution, outcomes[i].fitness, outcomes[i].score, outcomes[i].time);
     }
 
     return evolution;
@@ -108,12 +137,23 @@ static void RunConfigsInParallel(const std::vector<SweepConfig> &configs, int ge
                                   std::vector<std::vector<SweepRunResult>> &resultsByConfig)
 {
     size_t taskCount = configs.size() * (size_t)repeatCount;
-    unsigned int threadCount = std::thread::hardware_concurrency();
-    if (threadCount == 0)
-        threadCount = 1;
-    threadCount = (unsigned int)std::min((size_t)threadCount, taskCount);
-    printf("Running %zu configs x %d repeats = %zu runs across %u worker threads...\n",
-           configs.size(), repeatCount, taskCount, threadCount);
+    unsigned int hardwareThreads = std::thread::hardware_concurrency();
+    if (hardwareThreads == 0)
+        hardwareThreads = 1;
+    unsigned int threadCount = (unsigned int)std::min((size_t)hardwareThreads, taskCount);
+
+    // Each outer worker thread runs one (config, repeat) task to completion
+    // before picking up the next, so at most `threadCount` tasks ever train
+    // concurrently — split the machine's cores evenly across them for
+    // *inner* (per-generation, per-genome) parallelism too. That way a sweep
+    // with few tasks (e.g. one population size, one repeat) still uses every
+    // core instead of leaving most of them idle, without oversubscribing a
+    // sweep that already has enough tasks to saturate every core on its own
+    // (in which case this comes out to 1, i.e. no inner parallelism at all).
+    unsigned int innerThreadBudget = std::max(1u, hardwareThreads / threadCount);
+
+    printf("Running %zu configs x %d repeats = %zu runs across %u worker threads (%u inner threads each)...\n",
+           configs.size(), repeatCount, taskCount, threadCount, innerThreadBudget);
 
     std::atomic<size_t> nextTask{0};
     std::atomic<size_t> completedCount{0};
@@ -133,7 +173,8 @@ static void RunConfigsInParallel(const std::vector<SweepConfig> &configs, int ge
             // a CPU-time clock would double-count across threads and
             // misreport how long any of this actually took.
             auto start = std::chrono::steady_clock::now();
-            Evolution evolution = RunSweepConfig(configs[configIndex], generationBudget, screenWidth, screenHeight);
+            Evolution evolution = RunSweepConfig(configs[configIndex], generationBudget, screenWidth, screenHeight,
+                                                 innerThreadBudget);
             auto end = std::chrono::steady_clock::now();
 
             SweepRunResult &slot = resultsByConfig[configIndex][repeatIndex];
