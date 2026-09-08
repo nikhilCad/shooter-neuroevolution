@@ -23,6 +23,7 @@ add_executable(raylib_cpp
     PlayerAgent.cpp
     Simulation.cpp
     HistoryGraph.cpp
+    GenomeVisualizer.cpp
     ParameterSweep.cpp
 )
 

@@ -5,6 +5,7 @@
 #include "PlayerAgent.h"
 #include "Simulation.h"
 #include "HistoryGraph.h"
+#include "GenomeVisualizer.h"
 #include "ParameterSweep.h"
 #include <vector>
 #include <cstring>
@@ -47,7 +48,7 @@ int main(int argc, char **argv)
     // Fast-forward control: cycles through these multipliers, running that many
     // fixed-timestep simulation steps per rendered frame so training speeds up
     // without breaking bullet/enemy collisions.
-    static const int SPEED_LEVELS[] = {1, 2, 16, 128, 512, 4096, 49152};
+    static const int SPEED_LEVELS[] = {1, 2, 16, 4096, 8192, 16384};
     static const int SPEED_LEVEL_COUNT = sizeof(SPEED_LEVELS) / sizeof(SPEED_LEVELS[0]);
     int speedLevelIndex = 0;
     Rectangle speedButtonRect = {(float)screenWidth - 130.0f, 40.0f, 120.0f, 30.0f};
@@ -119,12 +120,21 @@ int main(int argc, char **argv)
         DrawText(TextFormat("Best score ever: %d", evolution.bestScoreEver), 10, 154, 20, DARKGRAY);
         DrawText(TextFormat("Best time ever: %.1f", evolution.bestTimeEver), 10, 178, 20, DARKGRAY);
 
+        DrawText("Tab: generation graphs   N: network diagram", 10, screenHeight - 22, 16, GRAY);
+
         // Hold Tab to see fitness/score/time plotted across generations
         if (IsKeyDown(KEY_TAB))
         {
             DrawRectangle(0, 0, screenWidth, screenHeight, Fade(RAYWHITE, 0.92f));
             DrawGenerationHistoryPanels(screenWidth, evolution,
                                         TextFormat("Generation history (%d completed)", (int)evolution.fitnessHistory.size()));
+        }
+
+        // Hold N to see the currently-playing genome's network structure
+        if (IsKeyDown(KEY_N))
+        {
+            DrawRectangle(0, 0, screenWidth, screenHeight, Fade(RAYWHITE, 0.92f));
+            DrawGenomeVisualization(CurrentGenome(evolution), {20, 20, (float)screenWidth - 40, (float)screenHeight - 40});
         }
 
         EndDrawing();

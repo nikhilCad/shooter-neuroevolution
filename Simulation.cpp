@@ -64,7 +64,8 @@ void SimulateStep(float deltaTime, Evolution &evolution, Player &player,
 
     // The current generation's genome controls the player this episode
     const Genome &brain = CurrentGenome(evolution);
-    PlayerAction action = DecidePlayerAction(brain, player, enemies, screenWidth, screenHeight);
+    float touchCooldownFrac = std::max(0.0f, episode.enemyTouchTimer) / ENEMY_TOUCH_COOLDOWN;
+    PlayerAction action = DecidePlayerAction(brain, player, enemies, screenWidth, screenHeight, touchCooldownFrac);
 
     UpdatePlayer(player, action.move, action.aim, deltaTime, screenWidth, screenHeight);
 
@@ -97,7 +98,7 @@ void SimulateStep(float deltaTime, Evolution &evolution, Player &player,
     episode.enemySpawnTimer -= deltaTime;
     if (episode.enemySpawnTimer <= 0.0f)
     {
-        enemies.push_back(SpawnEnemy(screenWidth, screenHeight, ENEMY_SIZE, ENEMY_SPEED, ENEMY_MAX_HEALTH));
+        enemies.push_back(SpawnEnemy(player.center, screenWidth, screenHeight, ENEMY_SIZE, ENEMY_SPEED, ENEMY_MAX_HEALTH));
         episode.enemySpawnTimer = ENEMY_SPAWN_INTERVAL;
     }
 
