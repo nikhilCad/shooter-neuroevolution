@@ -34,8 +34,8 @@ int main(int argc, char **argv)
 
     Evolution evolution;
     if (!LoadEvolution(evolution, SAVE_FILE_PATH))
-        evolution = CreateEvolution(PLAYER_AGENT_INPUT_SIZE, HIDDEN_SIZE, PLAYER_AGENT_OUTPUT_SIZE,
-                                    POPULATION_SIZE, ELITE_COUNT, MUTATION_RATE, MUTATION_STRENGTH);
+        evolution = CreateEvolution(PLAYER_AGENT_INPUT_SIZE, PLAYER_AGENT_OUTPUT_SIZE,
+                                    POPULATION_SIZE, MUTATION_RATE, MUTATION_STRENGTH);
     float autoSaveTimer = 0.0f;
 
     Player player;

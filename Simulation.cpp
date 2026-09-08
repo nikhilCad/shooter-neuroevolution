@@ -1,6 +1,6 @@
 #include "Simulation.h"
 #include "PlayerAgent.h"
-#include "NeuralNetwork.h"
+#include "Genome.h"
 #include <cmath>
 #include <algorithm>
 
@@ -63,7 +63,7 @@ void SimulateStep(float deltaTime, Evolution &evolution, Player &player,
     episode.reward += REWARD_SURVIVE_PER_SECOND * deltaTime;
 
     // The current generation's genome controls the player this episode
-    const NeuralNetwork &brain = CurrentGenome(evolution);
+    const Genome &brain = CurrentGenome(evolution);
     PlayerAction action = DecidePlayerAction(brain, player, enemies, screenWidth, screenHeight);
 
     UpdatePlayer(player, action.move, action.aim, deltaTime, screenWidth, screenHeight);

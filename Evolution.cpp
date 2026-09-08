@@ -1,15 +1,28 @@
 #include "Evolution.h"
-#include "raylib.h"
 #include "RandomUtil.h"
 #include <algorithm>
-#include <numeric>
-#include <cstdio>
 #include <cstdint>
+#include <cstdio>
+#include <random>
 
 namespace
 {
     const uint32_t SAVE_MAGIC = 0x4C4F5645; // 'EVOL'
-    const uint32_t SAVE_VERSION = 8;        // v8: added enemy velocity (vx,vy) to the per-enemy input features, so old saves' input size no longer matches
+    const uint32_t SAVE_VERSION = 9;        // v9: NEAT rewrite — variable-topology genomes replace the fixed dense network
+
+    // Genomes below this GeneticDistance of a species' representative belong
+    // to that species. Standard NEAT-paper-ish default; not swept/tuned here.
+    const float COMPATIBILITY_THRESHOLD = 3.0f;
+    // A species needs at least this many members before its champion is
+    // copied into the next generation unchanged.
+    const int SPECIES_CHAMPION_MIN_SIZE = 5;
+    // A species that hasn't improved in this many generations stops getting
+    // offspring (unless it's the species currently holding the best genome).
+    const int SPECIES_STAGNATION_LIMIT = 15;
+    const float PROBABILITY_ADD_CONNECTION = 0.08f;
+    const float PROBABILITY_ADD_NODE = 0.03f;
+    const float CROSSOVER_RATE = 0.75f;
+    const float STAGNATION_EPSILON = 0.01f;
 
     template <typename T>
     void WriteValue(FILE *file, const T &value)
@@ -41,33 +54,365 @@ namespace
         return fread(values.data(), sizeof(float), count, file) == count;
     }
 
-    void WriteNeuralNetwork(FILE *file, const NeuralNetwork &net)
+    void WriteGenome(FILE *file, const Genome &genome)
     {
-        WriteValue(file, (int32_t)net.inputSize);
-        WriteValue(file, (int32_t)net.hiddenSize);
-        WriteValue(file, (int32_t)net.outputSize);
-        WriteFloatVector(file, net.weights);
+        WriteValue(file, (int32_t)genome.inputCount);
+        WriteValue(file, (int32_t)genome.outputCount);
+        WriteValue(file, (uint32_t)genome.nodes.size());
+        for (const auto &n : genome.nodes)
+        {
+            WriteValue(file, (int32_t)n.id);
+            WriteValue(file, (int32_t)n.type);
+        }
+        WriteValue(file, (uint32_t)genome.connections.size());
+        for (const auto &c : genome.connections)
+        {
+            WriteValue(file, (int32_t)c.inNode);
+            WriteValue(file, (int32_t)c.outNode);
+            WriteValue(file, c.weight);
+            WriteValue(file, (uint8_t)(c.enabled ? 1 : 0));
+            WriteValue(file, (int32_t)c.innovation);
+        }
     }
 
-    bool ReadNeuralNetwork(FILE *file, NeuralNetwork &net)
+    bool ReadGenome(FILE *file, Genome &genome)
     {
-        int32_t inputSize, hiddenSize, outputSize;
-        if (!ReadValue(file, inputSize) || !ReadValue(file, hiddenSize) || !ReadValue(file, outputSize))
+        int32_t inputCount = 0, outputCount = 0;
+        uint32_t nodeCount = 0, connectionCount = 0;
+        if (!ReadValue(file, inputCount) || !ReadValue(file, outputCount) || !ReadValue(file, nodeCount))
             return false;
-        net.inputSize = inputSize;
-        net.hiddenSize = hiddenSize;
-        net.outputSize = outputSize;
-        return ReadFloatVector(file, net.weights);
+        genome.inputCount = inputCount;
+        genome.outputCount = outputCount;
+
+        genome.nodes.resize(nodeCount);
+        for (auto &n : genome.nodes)
+        {
+            int32_t id = 0, type = 0;
+            if (!ReadValue(file, id) || !ReadValue(file, type))
+                return false;
+            n.id = id;
+            n.type = (NodeType)type;
+        }
+
+        if (!ReadValue(file, connectionCount))
+            return false;
+        genome.connections.resize(connectionCount);
+        for (auto &c : genome.connections)
+        {
+            int32_t inNode = 0, outNode = 0, innovation = 0;
+            float weight = 0.0f;
+            uint8_t enabled = 0;
+            if (!ReadValue(file, inNode) || !ReadValue(file, outNode) || !ReadValue(file, weight) ||
+                !ReadValue(file, enabled) || !ReadValue(file, innovation))
+                return false;
+            c.inNode = inNode;
+            c.outNode = outNode;
+            c.weight = weight;
+            c.enabled = enabled != 0;
+            c.innovation = innovation;
+        }
+        return true;
+    }
+
+    // Fitness-proportional pick among `indices`, shifted so the group's
+    // lowest fitness still gets a small non-zero chance even if negative.
+    int PickWeightedIndex(const std::vector<int> &indices, const std::vector<float> &fitness)
+    {
+        float minFitness = fitness[indices[0]];
+        for (int i : indices)
+            minFitness = std::min(minFitness, fitness[i]);
+        float shift = -minFitness + 1.0f;
+
+        float total = 0.0f;
+        for (int i : indices)
+            total += fitness[i] + shift;
+
+        std::uniform_real_distribution<float> dist(0.0f, total);
+        float pick = dist(RandomEngine());
+        float running = 0.0f;
+        for (int i : indices)
+        {
+            running += fitness[i] + shift;
+            if (pick <= running)
+                return i;
+        }
+        return indices.back();
+    }
+
+    // Assigns each genome in evo.population to a species (compared against
+    // each existing species' representative, first match wins), dropping
+    // species nothing landed in and refreshing every survivor's
+    // representative to a random current member so species can drift over
+    // time instead of being pinned forever to whoever founded them.
+    void SpeciatePopulation(Evolution &evo)
+    {
+        for (auto &s : evo.species)
+            s.memberIndices.clear();
+
+        for (int i = 0; i < (int)evo.population.size(); i++)
+        {
+            Species *match = nullptr;
+            for (auto &s : evo.species)
+            {
+                if (GeneticDistance(evo.population[i], s.representative) < COMPATIBILITY_THRESHOLD)
+                {
+                    match = &s;
+                    break;
+                }
+            }
+            if (!match)
+            {
+                Species newSpecies;
+                newSpecies.representative = evo.population[i];
+                evo.species.push_back(newSpecies);
+                match = &evo.species.back();
+            }
+            match->memberIndices.push_back(i);
+        }
+
+        evo.species.erase(std::remove_if(evo.species.begin(), evo.species.end(),
+                                          [](const Species &s)
+                                          { return s.memberIndices.empty(); }),
+                           evo.species.end());
+
+        for (auto &s : evo.species)
+            s.representative = evo.population[s.memberIndices[RandomInt(0, (int)s.memberIndices.size() - 1)]];
+    }
+
+    void UpdateSpeciesStagnation(Evolution &evo)
+    {
+        for (auto &s : evo.species)
+        {
+            float bestThisGen = -1e9f;
+            for (int i : s.memberIndices)
+                bestThisGen = std::max(bestThisGen, evo.fitness[i]);
+
+            if (bestThisGen > s.bestFitnessEver + STAGNATION_EPSILON)
+            {
+                s.bestFitnessEver = bestThisGen;
+                s.generationsSinceImprovement = 0;
+            }
+            else
+            {
+                s.generationsSinceImprovement++;
+            }
+        }
+    }
+
+    // Splits totalSlots offspring across species, proportional to each
+    // species' total fitness-shared fitness (dividing by species size is
+    // what protects a small young species from being swamped by one big
+    // one). A species stuck past SPECIES_STAGNATION_LIMIT gets nothing
+    // unless it's the one holding the best genome — that species is never
+    // fully extinguished.
+    std::vector<int> AllocateOffspringCounts(const Evolution &evo, int totalSlots, int bestSpeciesIndex)
+    {
+        size_t speciesCount = evo.species.size();
+        std::vector<float> adjustedFitnessSum(speciesCount, 0.0f);
+        std::vector<bool> active(speciesCount, false);
+
+        float grandTotal = 0.0f;
+        for (size_t s = 0; s < speciesCount; s++)
+        {
+            const Species &species = evo.species[s];
+            bool stagnant = species.generationsSinceImprovement > SPECIES_STAGNATION_LIMIT;
+            active[s] = !stagnant || (int)s == bestSpeciesIndex;
+            if (!active[s])
+                continue;
+
+            float sum = 0.0f;
+            for (int i : species.memberIndices)
+                sum += evo.fitness[i] / (float)species.memberIndices.size();
+            adjustedFitnessSum[s] = sum;
+            grandTotal += sum;
+        }
+
+        std::vector<int> counts(speciesCount, 0);
+        if (totalSlots <= 0)
+            return counts;
+
+        if (grandTotal <= 0.0f)
+        {
+            int activeCount = 0;
+            for (bool a : active)
+                activeCount += a ? 1 : 0;
+            if (activeCount == 0)
+                return counts;
+            int share = totalSlots / activeCount;
+            for (size_t s = 0; s < speciesCount; s++)
+                if (active[s])
+                    counts[s] = share;
+            return counts;
+        }
+
+        std::vector<float> exact(speciesCount, 0.0f);
+        int allocated = 0;
+        for (size_t s = 0; s < speciesCount; s++)
+        {
+            if (!active[s])
+                continue;
+            exact[s] = adjustedFitnessSum[s] / grandTotal * (float)totalSlots;
+            counts[s] = (int)exact[s];
+            allocated += counts[s];
+        }
+
+        // Largest-remainder rounding so the counts sum to exactly totalSlots.
+        std::vector<size_t> order(speciesCount);
+        for (size_t s = 0; s < speciesCount; s++)
+            order[s] = s;
+        std::sort(order.begin(), order.end(), [&](size_t a, size_t b)
+                  { return (exact[a] - counts[a]) > (exact[b] - counts[b]); });
+        for (size_t k = 0; allocated < totalSlots && k < order.size(); k++)
+        {
+            if (!active[order[k]])
+                continue;
+            counts[order[k]]++;
+            allocated++;
+        }
+        return counts;
+    }
+
+    void EvolvePopulation(Evolution &evo)
+    {
+        int bestIndex = 0;
+        for (int i = 1; i < (int)evo.fitness.size(); i++)
+            if (evo.fitness[i] > evo.fitness[bestIndex])
+                bestIndex = i;
+        float thisGenBest = evo.fitness[bestIndex];
+
+        evo.fitnessHistory.push_back(thisGenBest);
+        evo.scoreHistory.push_back(*std::max_element(evo.episodeScores.begin(), evo.episodeScores.end()));
+        evo.timeHistory.push_back(*std::max_element(evo.episodeTimes.begin(), evo.episodeTimes.end()));
+
+        // bestFitnessEver is already updated per-episode in FinishEpisode, so
+        // by now it's max(everything before this generation, thisGenBest) —
+        // thisGenBest >= it exactly when this generation matched or set the
+        // all-time record, which is when the saved best genome needs refreshing.
+        if (thisGenBest >= evo.bestFitnessEver)
+            evo.bestGenomeEver = evo.population[bestIndex];
+
+        // Stagnation tracking: compare this generation's best against a
+        // smoothed trend of recent generations, not the single noisiest-ever
+        // episode — enemy spawns are randomized every episode, so one lucky
+        // replay can spike far above what the underlying policy actually
+        // earns on average, and comparing against that spike forever would
+        // make "no improvement" look permanent even while genuinely improving.
+        bool improved = thisGenBest > evo.recentBestTrend + STAGNATION_EPSILON;
+        evo.recentBestTrend = (evo.recentBestTrend <= -1e8f)
+                                   ? thisGenBest
+                                   : evo.recentBestTrend * 0.9f + thisGenBest * 0.1f;
+        evo.stagnantGenerations = improved ? 0 : evo.stagnantGenerations + 1;
+
+        // Ramps from 1x (no boost) up to 2x over the first ~50 stagnant
+        // generations, then keeps climbing (much more slowly) up to 6x by
+        // ~250 stagnant generations for a much deeper plateau that 2x alone
+        // can't break out of.
+        float stagnationBoost = 1.0f + std::min(evo.stagnantGenerations / 50.0f, 5.0f);
+
+        SpeciatePopulation(evo);
+        UpdateSpeciesStagnation(evo);
+
+        int bestSpeciesIndex = -1;
+        for (int s = 0; s < (int)evo.species.size(); s++)
+            for (int i : evo.species[s].memberIndices)
+                if (i == bestIndex)
+                    bestSpeciesIndex = s;
+
+        // A handful of fully-random immigrants every generation, so genetic
+        // diversity can't collapse to descendants of the same few ancestors
+        // forever — more of them the longer the population's been stuck.
+        // Reserved outside the species allocation, alongside one slot for
+        // the all-time-best genome, which is protected no matter what
+        // happens to species/fitness sharing that generation.
+        int immigrantCount = std::max(1, (int)(evo.populationSize / 10 * stagnationBoost));
+        int reservedSlots = 1 + immigrantCount;
+        int speciesSlots = std::max(0, evo.populationSize - reservedSlots);
+
+        std::vector<int> offspringCounts = AllocateOffspringCounts(evo, speciesSlots, bestSpeciesIndex);
+
+        std::vector<Genome> nextGeneration;
+        nextGeneration.reserve(evo.populationSize);
+        nextGeneration.push_back(evo.bestGenomeEver);
+
+        float mutationRate = std::min(evo.mutationRate * stagnationBoost, 0.5f);
+        float mutationStrength = evo.mutationStrength * stagnationBoost;
+        // Structural mutation chance rides the same stagnation boost, but
+        // capped lower — letting topology balloon as fast as weight noise
+        // ramps up would make a long-stuck population's genomes unwieldy.
+        float structuralBoost = std::min(stagnationBoost, 3.0f);
+
+        for (size_t s = 0; s < evo.species.size(); s++)
+        {
+            const Species &species = evo.species[s];
+            int slots = offspringCounts[s];
+            if (slots <= 0)
+                continue;
+
+            std::vector<int> ranked = species.memberIndices;
+            std::sort(ranked.begin(), ranked.end(), [&](int a, int b)
+                      { return evo.fitness[a] > evo.fitness[b]; });
+
+            int remaining = slots;
+            if ((int)species.memberIndices.size() >= SPECIES_CHAMPION_MIN_SIZE && remaining > 0)
+            {
+                nextGeneration.push_back(evo.population[ranked[0]]); // species champion, unchanged
+                remaining--;
+            }
+
+            for (int k = 0; k < remaining; k++)
+            {
+                Genome child;
+                if (species.memberIndices.size() >= 2 && RandomInt(0, 99) < (int)(CROSSOVER_RATE * 100.0f))
+                {
+                    int parentAIdx = PickWeightedIndex(species.memberIndices, evo.fitness);
+                    int parentBIdx = PickWeightedIndex(species.memberIndices, evo.fitness);
+                    child = Crossover(evo.population[parentAIdx], evo.fitness[parentAIdx],
+                                       evo.population[parentBIdx], evo.fitness[parentBIdx]);
+                }
+                else
+                {
+                    child = evo.population[PickWeightedIndex(species.memberIndices, evo.fitness)];
+                }
+
+                MutateWeights(child, mutationRate, mutationStrength);
+                if (RandomInt(0, 999) < (int)(PROBABILITY_ADD_CONNECTION * structuralBoost * 1000.0f))
+                    MutateAddConnection(child, evo.innovationTracker);
+                if (RandomInt(0, 999) < (int)(PROBABILITY_ADD_NODE * structuralBoost * 1000.0f))
+                    MutateAddNode(child, evo.innovationTracker);
+
+                nextGeneration.push_back(std::move(child));
+            }
+        }
+
+        for (int i = 0; i < immigrantCount && (int)nextGeneration.size() < evo.populationSize; i++)
+            nextGeneration.push_back(CreateMinimalGenome(evo.bestGenomeEver.inputCount,
+                                                          evo.bestGenomeEver.outputCount, evo.innovationTracker));
+
+        // Rounding/species-extinction edge cases can leave the count short —
+        // top up with mutated clones of the all-time best so population size
+        // never drifts.
+        while ((int)nextGeneration.size() < evo.populationSize)
+        {
+            Genome extra = evo.bestGenomeEver;
+            MutateWeights(extra, mutationRate, mutationStrength);
+            nextGeneration.push_back(std::move(extra));
+        }
+        nextGeneration.resize(evo.populationSize);
+
+        evo.population = std::move(nextGeneration);
+        evo.fitness.assign(evo.populationSize, 0.0f);
+        evo.episodeScores.assign(evo.populationSize, 0.0f);
+        evo.episodeTimes.assign(evo.populationSize, 0.0f);
+        evo.generation++;
+        evo.currentGenomeIndex = 0;
     }
 }
 
-Evolution CreateEvolution(int inputSize, int hiddenSize, int outputSize,
-                           int populationSize, int eliteCount,
+Evolution CreateEvolution(int inputCount, int outputCount, int populationSize,
                            float mutationRate, float mutationStrength)
 {
     Evolution evo;
     evo.populationSize = populationSize;
-    evo.eliteCount = eliteCount;
     evo.mutationRate = mutationRate;
     evo.mutationStrength = mutationStrength;
     evo.generation = 1;
@@ -80,92 +425,18 @@ Evolution CreateEvolution(int inputSize, int hiddenSize, int outputSize,
 
     evo.population.reserve(populationSize);
     for (int i = 0; i < populationSize; i++)
-        evo.population.push_back(CreateNeuralNetwork(inputSize, hiddenSize, outputSize));
+        evo.population.push_back(CreateMinimalGenome(inputCount, outputCount, evo.innovationTracker));
     evo.fitness.assign(populationSize, 0.0f);
     evo.episodeScores.assign(populationSize, 0.0f);
     evo.episodeTimes.assign(populationSize, 0.0f);
+    evo.bestGenomeEver = evo.population[0];
 
     return evo;
 }
 
-const NeuralNetwork &CurrentGenome(const Evolution &evo)
+const Genome &CurrentGenome(const Evolution &evo)
 {
     return evo.population[evo.currentGenomeIndex];
-}
-
-static void EvolvePopulation(Evolution &evo)
-{
-    // Rank genome indices by fitness, descending
-    std::vector<int> order(evo.populationSize);
-    std::iota(order.begin(), order.end(), 0);
-    std::sort(order.begin(), order.end(), [&](int a, int b)
-              { return evo.fitness[a] > evo.fitness[b]; });
-
-    // Record this generation's best-of on each metric for the HUD graphs,
-    // before the per-genome arrays get reset for the next generation.
-    evo.fitnessHistory.push_back(evo.fitness[order[0]]);
-    evo.scoreHistory.push_back(*std::max_element(evo.episodeScores.begin(), evo.episodeScores.end()));
-    evo.timeHistory.push_back(*std::max_element(evo.episodeTimes.begin(), evo.episodeTimes.end()));
-
-    // Stagnation tracking: compare this generation's best against a smoothed
-    // trend of recent generations, not the single noisiest-ever episode —
-    // enemy spawns are randomized every episode, so one lucky replay can spike
-    // far above what the underlying policy actually earns on average, and
-    // comparing against that spike forever would make "no improvement" look
-    // permanent even while the population keeps genuinely getting better.
-    float thisGenBest = evo.fitness[order[0]];
-    const float STAGNATION_EPSILON = 0.01f;
-    bool improved = thisGenBest > evo.recentBestTrend + STAGNATION_EPSILON;
-    evo.recentBestTrend = (evo.recentBestTrend <= -1e8f)
-                               ? thisGenBest
-                               : evo.recentBestTrend * 0.9f + thisGenBest * 0.1f;
-    evo.stagnantGenerations = improved ? 0 : evo.stagnantGenerations + 1;
-
-    // Ramps from 1x (no boost) up to 2x over the first ~50 stagnant
-    // generations — enough of a kick to escape a shallow local optimum
-    // without turning reproduction into mostly-random search — then keeps
-    // climbing (much more slowly) up to 6x by ~250 stagnant generations for
-    // the rare, much deeper plateau that 2x alone can't break out of.
-    float stagnationBoost = 1.0f + std::min(evo.stagnantGenerations / 50.0f, 5.0f);
-
-    std::vector<NeuralNetwork> nextGeneration;
-    nextGeneration.reserve(evo.populationSize);
-
-    // Elitism: the best performers carry over unchanged
-    for (int i = 0; i < evo.eliteCount && i < evo.populationSize; i++)
-        nextGeneration.push_back(evo.population[order[i]]);
-
-    // A handful of fully-random "immigrants" every generation, so genetic
-    // diversity can't collapse to small mutations of the same few ancestors
-    // forever. More of them get injected the longer the population has been
-    // stuck, since that's a sign the current gene pool has run out of nearby
-    // improvements to find.
-    int immigrantCount = std::max(1, (int)(evo.populationSize / 10 * stagnationBoost));
-    for (int i = 0; i < immigrantCount && (int)nextGeneration.size() < evo.populationSize; i++)
-    {
-        const NeuralNetwork &shape = evo.population[0];
-        nextGeneration.push_back(CreateNeuralNetwork(shape.inputSize, shape.hiddenSize, shape.outputSize));
-    }
-
-    // Fill the rest with mutated clones of the elites, alternating between
-    // fine-tuning steps (normal strength) and bigger exploratory jumps (extra
-    // strength), both scaled up by the stagnation boost so the search isn't
-    // limited to only ever taking tiny steps once things plateau.
-    float mutationRate = std::min(evo.mutationRate * stagnationBoost, 0.5f);
-    while ((int)nextGeneration.size() < evo.populationSize)
-    {
-        int parentIndex = order[RandomInt(0, evo.eliteCount - 1)];
-        bool exploratory = (nextGeneration.size() % 2) == 0;
-        float strength = (exploratory ? evo.mutationStrength * 4.0f : evo.mutationStrength) * stagnationBoost;
-        nextGeneration.push_back(MutateNetwork(evo.population[parentIndex], mutationRate, strength));
-    }
-
-    evo.population = nextGeneration;
-    evo.fitness.assign(evo.populationSize, 0.0f);
-    evo.episodeScores.assign(evo.populationSize, 0.0f);
-    evo.episodeTimes.assign(evo.populationSize, 0.0f);
-    evo.generation++;
-    evo.currentGenomeIndex = 0;
 }
 
 void FinishEpisode(Evolution &evo, float episodeFitness, int episodeScore, float episodeTime)
@@ -192,7 +463,6 @@ bool SaveEvolution(const Evolution &evo, const char *filePath)
     WriteValue(file, SAVE_VERSION);
 
     WriteValue(file, (int32_t)evo.populationSize);
-    WriteValue(file, (int32_t)evo.eliteCount);
     WriteValue(file, evo.mutationRate);
     WriteValue(file, evo.mutationStrength);
     WriteValue(file, (int32_t)evo.generation);
@@ -202,6 +472,8 @@ bool SaveEvolution(const Evolution &evo, const char *filePath)
     WriteValue(file, evo.bestTimeEver);
     WriteValue(file, (int32_t)evo.stagnantGenerations);
     WriteValue(file, evo.recentBestTrend);
+    WriteValue(file, (int32_t)evo.innovationTracker.nextNodeId);
+    WriteValue(file, (int32_t)evo.innovationTracker.nextInnovationNumber);
 
     WriteFloatVector(file, evo.fitnessHistory);
     WriteFloatVector(file, evo.scoreHistory);
@@ -211,8 +483,9 @@ bool SaveEvolution(const Evolution &evo, const char *filePath)
     WriteFloatVector(file, evo.episodeScores);
     WriteFloatVector(file, evo.episodeTimes);
 
-    for (const NeuralNetwork &net : evo.population)
-        WriteNeuralNetwork(file, net);
+    WriteGenome(file, evo.bestGenomeEver);
+    for (const Genome &g : evo.population)
+        WriteGenome(file, g);
 
     fclose(file);
     return true;
@@ -231,10 +504,9 @@ bool LoadEvolution(Evolution &evo, const char *filePath)
     Evolution loaded{};
     if (ok)
     {
-        int32_t populationSize = 0, eliteCount = 0, generation = 0, currentGenomeIndex = 0, bestScoreEver = 0;
-        int32_t stagnantGenerations = 0;
+        int32_t populationSize = 0, generation = 0, currentGenomeIndex = 0, bestScoreEver = 0;
+        int32_t stagnantGenerations = 0, nextNodeId = 0, nextInnovationNumber = 0;
         ok = ok && ReadValue(file, populationSize);
-        ok = ok && ReadValue(file, eliteCount);
         ok = ok && ReadValue(file, loaded.mutationRate);
         ok = ok && ReadValue(file, loaded.mutationStrength);
         ok = ok && ReadValue(file, generation);
@@ -244,6 +516,8 @@ bool LoadEvolution(Evolution &evo, const char *filePath)
         ok = ok && ReadValue(file, loaded.bestTimeEver);
         ok = ok && ReadValue(file, stagnantGenerations);
         ok = ok && ReadValue(file, loaded.recentBestTrend);
+        ok = ok && ReadValue(file, nextNodeId);
+        ok = ok && ReadValue(file, nextInnovationNumber);
 
         ok = ok && ReadFloatVector(file, loaded.fitnessHistory);
         ok = ok && ReadFloatVector(file, loaded.scoreHistory);
@@ -254,21 +528,24 @@ bool LoadEvolution(Evolution &evo, const char *filePath)
         ok = ok && ReadFloatVector(file, loaded.episodeTimes);
 
         loaded.populationSize = populationSize;
-        loaded.eliteCount = eliteCount;
         loaded.generation = generation;
         loaded.currentGenomeIndex = currentGenomeIndex;
         loaded.bestScoreEver = bestScoreEver;
         loaded.stagnantGenerations = stagnantGenerations;
+        loaded.innovationTracker.nextNodeId = nextNodeId;
+        loaded.innovationTracker.nextInnovationNumber = nextInnovationNumber;
+
+        ok = ok && ReadGenome(file, loaded.bestGenomeEver);
 
         if (ok && populationSize > 0)
         {
             loaded.population.reserve(populationSize);
             for (int32_t i = 0; i < populationSize && ok; i++)
             {
-                NeuralNetwork net;
-                ok = ReadNeuralNetwork(file, net);
+                Genome g;
+                ok = ReadGenome(file, g);
                 if (ok)
-                    loaded.population.push_back(net);
+                    loaded.population.push_back(std::move(g));
             }
         }
 
