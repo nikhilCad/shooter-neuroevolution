@@ -20,6 +20,20 @@ struct Episode
     float shootTimer = 0.0f;
     float enemySpawnTimer = 0.0f;
     float enemyTouchTimer = 0.0f;
+
+    // Reward broken down by source, purely for diagnostics/logging — the sum
+    // of these always equals `reward`, since every place that changes reward
+    // adds to the matching field here too. touch/death penalties are stored
+    // as positive magnitudes (points lost), not negative, so a report reads
+    // as "touch penalty: 75.0" rather than a confusing "-75.0".
+    float rewardSurvival = 0.0f;
+    float rewardHits = 0.0f;
+    float rewardKills = 0.0f;
+    float rewardTouchPenalty = 0.0f;
+    float rewardDeathPenalty = 0.0f;
+
+    int shotsFired = 0;
+    int hits = 0;
 };
 
 // --- Player config ---
@@ -104,6 +118,16 @@ struct EpisodeOutcome
     float fitness;
     int score;
     float time;
+
+    // Diagnostics, copied straight from the finished Episode — see Episode's
+    // own fields for what each one means.
+    float rewardSurvival;
+    float rewardHits;
+    float rewardKills;
+    float rewardTouchPenalty;
+    float rewardDeathPenalty;
+    int shotsFired;
+    int hits;
 };
 
 // Plays one full episode for `genome`, from a fresh spawn to death, entirely

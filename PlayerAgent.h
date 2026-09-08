@@ -16,10 +16,15 @@ const int PLAYER_AGENT_PLAYER_FEATURE_COUNT = 10;
 // instead of only ever aiming at their current position.
 const int PLAYER_AGENT_NEAREST_ENEMY_COUNT = 4;
 const int PLAYER_AGENT_FEATURES_PER_ENEMY = 7;
-// Aggregate (not per-enemy) features: total active enemy count, and how many
-// of them are within PLAYER_AGENT_LOCAL_THREAT_RADIUS of the player right now.
+// Aggregate (not per-enemy) features: how many active enemies are within
+// PLAYER_AGENT_LOCAL_THREAT_RADIUS of the player right now, and how many sit
+// in a narrow cone ahead of the player's current aim (PLAYER_AGENT_FORWARD_CONE_COS).
 const int PLAYER_AGENT_AGGREGATE_FEATURE_COUNT = 2;
 const float PLAYER_AGENT_LOCAL_THREAT_RADIUS = 150.0f;
+// cos(20 degrees) — an enemy counts as "ahead" when the angle between the
+// player's facing and the direction to that enemy is within this half-angle,
+// roughly "would a shot fired right now plausibly hit this."
+const float PLAYER_AGENT_FORWARD_CONE_COS = 0.9397f;
 const int PLAYER_AGENT_INPUT_SIZE = PLAYER_AGENT_PLAYER_FEATURE_COUNT +
                                     PLAYER_AGENT_NEAREST_ENEMY_COUNT * PLAYER_AGENT_FEATURES_PER_ENEMY +
                                     PLAYER_AGENT_AGGREGATE_FEATURE_COUNT;
@@ -48,3 +53,8 @@ std::vector<float> GetPlayerState(const Player &player, const std::vector<Enemy>
 PlayerAction DecidePlayerAction(const Genome &brain, const Player &player,
                                  const std::vector<Enemy> &enemies,
                                  int screenWidth, int screenHeight, float touchCooldownFrac);
+
+// Human-readable name for input vector index `index` (0..PLAYER_AGENT_INPUT_SIZE-1),
+// e.g. "player.wallDistX" or "enemy#2.closingSpeed" — used by the sweep's
+// input-usage report so a raw input index means something to a reader.
+const char *PlayerAgentInputLabel(int index);

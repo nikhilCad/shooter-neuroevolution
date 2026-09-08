@@ -51,12 +51,25 @@ struct Evolution
     // once progress resumes.
     int stagnantGenerations;
     float recentBestTrend;
+    // Deepest stagnantGenerations has ever reached this run — a proxy for how
+    // hard the anti-stagnation mechanism has had to work, and by extension
+    // (since stagnationBoost is a deterministic function of stagnantGenerations)
+    // how high mutation strength/structural-mutation chance actually climbed.
+    int maxStagnantGenerationsEver = 0;
 
     // One entry per completed generation (the best any genome achieved that
     // generation), for the HUD's fitness/score/time-over-generations graphs.
     std::vector<float> fitnessHistory;
     std::vector<float> scoreHistory;
     std::vector<float> timeHistory;
+
+    // One entry per completed generation: species count, and population
+    // averages of hidden-node/enabled-connection count — diagnostics for
+    // whether the population's diversity/structure is actually developing
+    // over a run, not shown on any HUD graph (yet), just logged/reported.
+    std::vector<int> speciesCountHistory;
+    std::vector<float> avgHiddenNodeCountHistory;
+    std::vector<float> avgConnectionCountHistory;
 };
 
 Evolution CreateEvolution(int inputCount, int outputCount, int populationSize,

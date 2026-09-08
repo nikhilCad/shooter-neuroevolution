@@ -12,3 +12,9 @@
 // for these tiny genomes) so it always reflects the genome's current shape,
 // including nodes/connections a mutation just added this generation.
 void DrawGenomeVisualization(const Genome &genome, Rectangle area);
+
+// Renders `genome`'s diagram (with `title` above it) to an offscreen texture
+// and saves it as a PNG — the same approach as HistoryGraph's
+// ExportGenerationHistoryImage. Requires a live GL context (InitWindow must
+// already have been called), even though nothing is shown on screen.
+bool ExportGenomeVisualizationImage(const Genome &genome, const char *title, const char *imagePath);

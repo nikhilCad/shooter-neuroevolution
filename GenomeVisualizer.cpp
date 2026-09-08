@@ -162,3 +162,24 @@ void DrawGenomeVisualization(const Genome &genome, Rectangle area)
     DrawText("blue = input, gray = bias, orange = hidden, green = output  |  line green/red = weight +/-",
              (int)area.x + 10, (int)(area.y + area.height - 16), 12, GRAY);
 }
+
+bool ExportGenomeVisualizationImage(const Genome &genome, const char *title, const char *imagePath)
+{
+    const int canvasWidth = 1000;
+    const int canvasHeight = 700;
+    const float titleHeight = 40.0f;
+
+    RenderTexture2D target = LoadRenderTexture(canvasWidth, canvasHeight);
+    BeginTextureMode(target);
+    ClearBackground(RAYWHITE);
+    DrawText(title, 10, 10, 20, BLACK);
+    DrawGenomeVisualization(genome, {10.0f, titleHeight, (float)canvasWidth - 20.0f, (float)canvasHeight - titleHeight - 10.0f});
+    EndTextureMode();
+
+    Image image = LoadImageFromTexture(target.texture);
+    ImageFlipVertical(&image); // render textures are stored bottom-up in OpenGL
+    bool ok = ExportImage(image, imagePath);
+    UnloadImage(image);
+    UnloadRenderTexture(target);
+    return ok;
+}

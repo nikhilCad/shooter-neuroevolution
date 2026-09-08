@@ -1,6 +1,8 @@
 #include "ParameterSweep.h"
 #include "HistoryGraph.h"
+#include "GenomeVisualizer.h"
 #include "PlayerAgent.h"
+#include "Genome.h"
 #include <cstdio>
 #include <cstdlib>
 #include <cmath>
@@ -77,8 +79,15 @@ static std::string SweepConfigLabel(const SweepConfig &config)
 // through FinishEpisode so its normal per-genome bookkeeping (and the
 // EvolvePopulation it triggers once the whole population's in) is unaffected
 // by however the work was actually scheduled.
-static Evolution RunSweepConfig(const SweepConfig &config, int generationBudget, int screenWidth, int screenHeight,
-                                 unsigned int innerThreadBudget)
+struct SweepRunOutput
+{
+    Evolution evolution;
+    EpisodeOutcome bestOutcome; // the single best episode's full outcome (reward breakdown, accuracy) — an
+                                // exact match to evolution.bestFitnessEver, not a replay under new RNG draws
+};
+
+static SweepRunOutput RunSweepConfig(const SweepConfig &config, int generationBudget, int screenWidth, int screenHeight,
+                                      unsigned int innerThreadBudget)
 {
     Evolution evolution = CreateEvolution(PLAYER_AGENT_INPUT_SIZE, PLAYER_AGENT_OUTPUT_SIZE,
                                            config.populationSize,
@@ -86,6 +95,8 @@ static Evolution RunSweepConfig(const SweepConfig &config, int generationBudget,
 
     unsigned int threadCount = std::max(1u, std::min(innerThreadBudget, (unsigned int)config.populationSize));
     std::vector<EpisodeOutcome> outcomes(config.populationSize);
+    EpisodeOutcome bestOutcome{};
+    bestOutcome.fitness = -1e9f;
 
     while (evolution.generation <= generationBudget)
     {
@@ -112,16 +123,21 @@ static Evolution RunSweepConfig(const SweepConfig &config, int generationBudget,
         }
 
         for (int i = 0; i < evolution.populationSize; i++)
+        {
+            if (outcomes[i].fitness >= bestOutcome.fitness)
+                bestOutcome = outcomes[i];
             FinishEpisode(evolution, outcomes[i].fitness, outcomes[i].score, outcomes[i].time);
+        }
     }
 
-    return evolution;
+    return {std::move(evolution), bestOutcome};
 }
 
 struct SweepRunResult
 {
     Evolution evolution;
     double trainSeconds;
+    EpisodeOutcome bestOutcome;
 };
 
 // Runs every (config, repeat) pair on a pool of worker threads, pulling the
@@ -173,12 +189,13 @@ static void RunConfigsInParallel(const std::vector<SweepConfig> &configs, int ge
             // a CPU-time clock would double-count across threads and
             // misreport how long any of this actually took.
             auto start = std::chrono::steady_clock::now();
-            Evolution evolution = RunSweepConfig(configs[configIndex], generationBudget, screenWidth, screenHeight,
-                                                 innerThreadBudget);
+            SweepRunOutput output = RunSweepConfig(configs[configIndex], generationBudget, screenWidth, screenHeight,
+                                                    innerThreadBudget);
             auto end = std::chrono::steady_clock::now();
 
             SweepRunResult &slot = resultsByConfig[configIndex][repeatIndex];
-            slot.evolution = std::move(evolution);
+            slot.evolution = std::move(output.evolution);
+            slot.bestOutcome = output.bestOutcome;
             slot.trainSeconds = std::chrono::duration<double>(end - start).count();
 
             size_t doneSoFar = completedCount.fetch_add(1) + 1;
@@ -267,6 +284,45 @@ static ConfigSummary SummarizeConfig(const SweepConfig &config, const std::vecto
     return summary;
 }
 
+// Tracks, per real input node id, how much the whole sweep's final
+// populations actually rely on it: total |weight| and sample count across
+// every enabled connection originating from that input, in every genome, in
+// every (config, repeat)'s final population. An input whose average comes
+// out near zero across the whole sweep is a candidate to drop from
+// GetPlayerState — fewer inputs means fewer connections for every genome to
+// evaluate, which speeds up every single Activate call.
+struct InputUsageStats
+{
+    std::vector<double> totalAbsWeight;
+    std::vector<long long> sampleCount;
+};
+
+static InputUsageStats ComputeInputUsageStats(const std::vector<std::vector<SweepRunResult>> &resultsByConfig)
+{
+    InputUsageStats stats;
+    stats.totalAbsWeight.assign(PLAYER_AGENT_INPUT_SIZE, 0.0);
+    stats.sampleCount.assign(PLAYER_AGENT_INPUT_SIZE, 0);
+
+    for (const auto &repeats : resultsByConfig)
+        for (const auto &result : repeats)
+            for (const Genome &genome : result.evolution.population)
+                for (const ConnectionGene &c : genome.connections)
+                    // inNode < PLAYER_AGENT_INPUT_SIZE excludes the bias node
+                    // (id == inputCount) and any hidden node (id beyond that).
+                    if (c.enabled && c.inNode >= 0 && c.inNode < PLAYER_AGENT_INPUT_SIZE)
+                    {
+                        stats.totalAbsWeight[c.inNode] += fabs(c.weight);
+                        stats.sampleCount[c.inNode]++;
+                    }
+
+    return stats;
+}
+
+static double AvgAbsWeight(const InputUsageStats &stats, int index)
+{
+    return stats.sampleCount[index] > 0 ? stats.totalAbsWeight[index] / (double)stats.sampleCount[index] : 0.0;
+}
+
 void RunParameterSweep(const SweepOptions &options)
 {
     const int screenWidth = 800;
@@ -349,6 +405,53 @@ void RunParameterSweep(const SweepOptions &options)
         summaryRows.push_back({summary, imagePath});
     }
 
+    // The single fittest genome found anywhere in the whole sweep (across
+    // every config and repeat), so its network diagram can be embedded in
+    // the summary doc alongside the input-usage stats below.
+    const Evolution *fittestEvolution = nullptr;
+    const EpisodeOutcome *fittestOutcome = nullptr;
+    std::string fittestLabel;
+    size_t fittestRepeat = 0;
+    for (size_t i = 0; i < resultsByConfig.size(); i++)
+        for (size_t r = 0; r < resultsByConfig[i].size(); r++)
+        {
+            const Evolution &evo = resultsByConfig[i][r].evolution;
+            if (!fittestEvolution || evo.bestFitnessEver > fittestEvolution->bestFitnessEver)
+            {
+                fittestEvolution = &evo;
+                fittestOutcome = &resultsByConfig[i][r].bestOutcome;
+                fittestLabel = SweepConfigLabel(configs[i]);
+                fittestRepeat = r;
+            }
+        }
+
+    std::string fittestImagePath = std::string(imageDir) + "/fittest_genome.png";
+    if (fittestEvolution)
+    {
+        std::string fittestTitle = "Fittest genome overall: " + fittestLabel + " run " +
+                                    std::to_string(fittestRepeat + 1) + " (fitness " +
+                                    std::to_string((int)fittestEvolution->bestFitnessEver) + ")";
+        ExportGenomeVisualizationImage(fittestEvolution->bestGenomeEver, fittestTitle.c_str(), fittestImagePath.c_str());
+    }
+
+    InputUsageStats inputUsage = ComputeInputUsageStats(resultsByConfig);
+    std::vector<int> inputRanking(PLAYER_AGENT_INPUT_SIZE);
+    for (int i = 0; i < PLAYER_AGENT_INPUT_SIZE; i++)
+        inputRanking[i] = i;
+    std::sort(inputRanking.begin(), inputRanking.end(), [&](int a, int b)
+              { return AvgAbsWeight(inputUsage, a) > AvgAbsWeight(inputUsage, b); });
+
+    // Captured into std::strings immediately, one call at a time —
+    // PlayerAgentInputLabel returns enemy-feature labels through a shared
+    // thread_local buffer, so calling it twice within the same expression
+    // (e.g. as two printf arguments) would let the second call overwrite the
+    // first before printf ever reads either pointer.
+    std::string mostReliedLabel = PlayerAgentInputLabel(inputRanking.front());
+    std::string leastReliedLabel = PlayerAgentInputLabel(inputRanking.back());
+    printf("Most relied-on input: %s (avg |weight| %.3f). Least relied-on: %s (avg |weight| %.3f).\n",
+           mostReliedLabel.c_str(), AvgAbsWeight(inputUsage, inputRanking.front()),
+           leastReliedLabel.c_str(), AvgAbsWeight(inputUsage, inputRanking.back()));
+
     fclose(out);
     CloseWindow();
 
@@ -394,6 +497,72 @@ void RunParameterSweep(const SweepOptions &options)
             std::string label = SweepConfigLabel(row.summary.config);
             fprintf(summaryDoc, "## %s\n\n![%s](%s)\n\n", label.c_str(), label.c_str(), row.imagePath.c_str());
         }
+
+        fprintf(summaryDoc, "## Input usage\n\n");
+        fprintf(summaryDoc, "Average |weight| of enabled connections from each input, across every genome in "
+                             "every config/repeat's final population — a rough \"how much does the evolved "
+                             "population actually rely on this input\" signal. An input sitting near zero here "
+                             "across the whole sweep is a candidate to drop from `GetPlayerState` (fewer inputs "
+                             "means fewer connections for every genome to evaluate, speeding up every `Activate` "
+                             "call) — but check this holds up across more than one sweep before cutting anything, "
+                             "since a single run's population can converge on ignoring a genuinely useful input "
+                             "just by chance.\n\n");
+        fprintf(summaryDoc, "**Most relied on:** `%s` (avg |weight| %.3f). **Least relied on:** `%s` (avg |weight| %.3f).\n\n",
+                mostReliedLabel.c_str(), AvgAbsWeight(inputUsage, inputRanking.front()),
+                leastReliedLabel.c_str(), AvgAbsWeight(inputUsage, inputRanking.back()));
+        fprintf(summaryDoc, "| Input | Avg \\|weight\\| | Samples |\n");
+        fprintf(summaryDoc, "|---|---|---|\n");
+        for (int index : inputRanking)
+        {
+            std::string label = PlayerAgentInputLabel(index); // captured before the next call reuses the shared buffer
+            fprintf(summaryDoc, "| %s | %.3f | %lld |\n", label.c_str(), AvgAbsWeight(inputUsage, index),
+                    inputUsage.sampleCount[index]);
+        }
+        fprintf(summaryDoc, "\n");
+
+        if (fittestEvolution)
+        {
+            fprintf(summaryDoc, "## Fittest genome overall\n\n");
+            fprintf(summaryDoc, "`%s` run %zu — fitness %.1f, score %d, time %.1f\n\n",
+                    fittestLabel.c_str(), fittestRepeat + 1, fittestEvolution->bestFitnessEver,
+                    fittestEvolution->bestScoreEver, fittestEvolution->bestTimeEver);
+            fprintf(summaryDoc, "![fittest genome](%s)\n\n", fittestImagePath.c_str());
+
+            fprintf(summaryDoc, "### Diagnostics for that run\n\n");
+
+            if (fittestOutcome)
+            {
+                float accuracy = fittestOutcome->shotsFired > 0
+                                     ? (float)fittestOutcome->hits / (float)fittestOutcome->shotsFired * 100.0f
+                                     : 0.0f;
+                fprintf(summaryDoc, "**Reward breakdown** (of that fittest episode's %.1f total): "
+                                     "survival %.1f, hits %.1f, kills %.1f, touch penalty -%.1f, death penalty -%.1f.\n\n",
+                        fittestOutcome->fitness, fittestOutcome->rewardSurvival, fittestOutcome->rewardHits,
+                        fittestOutcome->rewardKills, fittestOutcome->rewardTouchPenalty, fittestOutcome->rewardDeathPenalty);
+                fprintf(summaryDoc, "**Shot accuracy:** %d/%d (%.1f%%).\n\n",
+                        fittestOutcome->hits, fittestOutcome->shotsFired, accuracy);
+            }
+
+            if (!fittestEvolution->speciesCountHistory.empty())
+            {
+                auto [minIt, maxIt] = std::minmax_element(fittestEvolution->speciesCountHistory.begin(),
+                                                           fittestEvolution->speciesCountHistory.end());
+                fprintf(summaryDoc, "**Species count:** %d at the final generation (ranged %d-%d over the run).\n\n",
+                        fittestEvolution->speciesCountHistory.back(), *minIt, *maxIt);
+            }
+            if (!fittestEvolution->avgHiddenNodeCountHistory.empty())
+            {
+                fprintf(summaryDoc, "**Population complexity at the final generation:** avg %.1f hidden nodes, "
+                                     "avg %.1f enabled connections per genome.\n\n",
+                        fittestEvolution->avgHiddenNodeCountHistory.back(),
+                        fittestEvolution->avgConnectionCountHistory.back());
+            }
+            float peakBoost = 1.0f + std::min(fittestEvolution->maxStagnantGenerationsEver / 50.0f, 5.0f);
+            fprintf(summaryDoc, "**Deepest stagnation reached:** %d generations without improving "
+                                 "(mutation/structural-mutation boost peaked around %.1fx).\n\n",
+                    fittestEvolution->maxStagnantGenerationsEver, peakBoost);
+        }
+
         fclose(summaryDoc);
     }
 
