@@ -3,6 +3,7 @@
 #include "Player.h"
 #include "Enemy.h"
 #include "Genome.h"
+#include <cstdint>
 #include <vector>
 
 struct Bullet
@@ -135,4 +136,11 @@ struct EpisodeOutcome
 // shared). Safe to call concurrently for different genomes on different
 // threads. Used by the parameter sweep to evaluate a whole generation's
 // population in parallel instead of one genome at a time.
-EpisodeOutcome PlayEpisode(const Genome &genome, int screenWidth, int screenHeight);
+//
+// `seed` reseeds the calling thread's RNG (see SeedRandomEngine) before the
+// episode starts, so the outcome depends only on the genome and the seed —
+// never on which thread happened to run it or how work was scheduled. The
+// sweep derives a different seed per (config, repeat, generation, genome)
+// via CombineSeed so repeats stay independent while the whole run becomes
+// reproducible given the same top-level --seed.
+EpisodeOutcome PlayEpisode(const Genome &genome, int screenWidth, int screenHeight, uint64_t seed);

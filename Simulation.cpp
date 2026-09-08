@@ -1,5 +1,6 @@
 #include "Simulation.h"
 #include "PlayerAgent.h"
+#include "RandomUtil.h"
 #include <cmath>
 #include <algorithm>
 
@@ -208,8 +209,10 @@ bool SimulateStep(float deltaTime, const Genome &brain, Player &player,
     return false;
 }
 
-EpisodeOutcome PlayEpisode(const Genome &genome, int screenWidth, int screenHeight)
+EpisodeOutcome PlayEpisode(const Genome &genome, int screenWidth, int screenHeight, uint64_t seed)
 {
+    SeedRandomEngine(seed);
+
     Player player;
     std::vector<Bullet> bullets;
     std::vector<Enemy> enemies;

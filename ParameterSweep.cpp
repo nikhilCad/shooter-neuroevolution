@@ -3,8 +3,10 @@
 #include "GenomeVisualizer.h"
 #include "PlayerAgent.h"
 #include "Genome.h"
+#include "RandomUtil.h"
 #include <cstdio>
 #include <cstdlib>
+#include <cstdint>
 #include <cmath>
 #include <algorithm>
 #include <string>
@@ -14,6 +16,7 @@
 #include <atomic>
 #include <mutex>
 #include <chrono>
+#include <random>
 
 struct SweepConfig
 {
@@ -52,8 +55,18 @@ SweepOptions ParseSweepOptions(int argc, char **argv)
             options.mutationStrength = (float)std::atof(valueAfter("--mutation-strength=").c_str());
         else if (arg.rfind("--repeats=", 0) == 0)
             options.repeatCount = std::atoi(valueAfter("--repeats=").c_str());
+        else if (arg.rfind("--seed=", 0) == 0)
+        {
+            options.seed = strtoull(valueAfter("--seed=").c_str(), nullptr, 10);
+            options.seedSpecified = true;
+        }
     }
     options.repeatCount = std::max(1, options.repeatCount);
+    if (!options.seedSpecified)
+    {
+        std::random_device rd;
+        options.seed = ((uint64_t)rd() << 32) | rd();
+    }
     return options;
 }
 
@@ -86,9 +99,21 @@ struct SweepRunOutput
                                 // exact match to evolution.bestFitnessEver, not a replay under new RNG draws
 };
 
+// `runSeed` (already unique per config+repeat — see RunConfigsInParallel)
+// makes this whole run reproducible independent of thread count/scheduling:
+// each genome's episode is seeded from (runSeed, generation, genomeIndex) via
+// CombineSeed, so it never matters which physical thread actually played it.
+// Mutation/crossover/selection (inside CreateEvolution/EvolvePopulation) all
+// run on THIS function's own thread, whose RNG would otherwise inherit
+// whatever state PlayEpisode's calls happened to leave it in when
+// innerThreadBudget is 1 (i.e. this thread runs PlayEpisode inline instead of
+// spawning separate ones) — reseeding it explicitly from (runSeed,
+// generation) right before every EvolvePopulation call keeps that
+// deterministic too, and independent of innerThreadBudget.
 static SweepRunOutput RunSweepConfig(const SweepConfig &config, int generationBudget, int screenWidth, int screenHeight,
-                                      unsigned int innerThreadBudget)
+                                      unsigned int innerThreadBudget, uint64_t runSeed)
 {
+    SeedRandomEngine(runSeed); // deterministic initial population
     Evolution evolution = CreateEvolution(PLAYER_AGENT_INPUT_SIZE, PLAYER_AGENT_OUTPUT_SIZE,
                                            config.populationSize,
                                            config.mutationRate, config.mutationStrength);
@@ -100,12 +125,14 @@ static SweepRunOutput RunSweepConfig(const SweepConfig &config, int generationBu
 
     while (evolution.generation <= generationBudget)
     {
+        int generation = evolution.generation; // captured before FinishEpisode can advance it below
         std::atomic<int> nextGenomeIndex{0};
         auto worker = [&]()
         {
             int i;
             while ((i = nextGenomeIndex.fetch_add(1)) < evolution.populationSize)
-                outcomes[i] = PlayEpisode(evolution.population[i], screenWidth, screenHeight);
+                outcomes[i] = PlayEpisode(evolution.population[i], screenWidth, screenHeight,
+                                          CombineSeed(runSeed, generation, i));
         };
 
         if (threadCount <= 1)
@@ -122,6 +149,7 @@ static SweepRunOutput RunSweepConfig(const SweepConfig &config, int generationBu
                 w.join();
         }
 
+        SeedRandomEngine(CombineSeed(runSeed, generation, -1)); // see function comment
         for (int i = 0; i < evolution.populationSize; i++)
         {
             if (outcomes[i].fitness >= bestOutcome.fitness)
@@ -149,7 +177,7 @@ struct SweepRunResult
 // CreateEvolution are plain CPU work — so this stays safe with no window/GL
 // context on the worker threads.
 static void RunConfigsInParallel(const std::vector<SweepConfig> &configs, int generationBudget, int repeatCount,
-                                  int screenWidth, int screenHeight,
+                                  int screenWidth, int screenHeight, uint64_t sweepSeed,
                                   std::vector<std::vector<SweepRunResult>> &resultsByConfig)
 {
     size_t taskCount = configs.size() * (size_t)repeatCount;
@@ -188,9 +216,10 @@ static void RunConfigsInParallel(const std::vector<SweepConfig> &configs, int ge
             // many other runs are training concurrently on other threads —
             // a CPU-time clock would double-count across threads and
             // misreport how long any of this actually took.
+            uint64_t runSeed = CombineSeed(sweepSeed, (int)configIndex, (int)repeatIndex);
             auto start = std::chrono::steady_clock::now();
             SweepRunOutput output = RunSweepConfig(configs[configIndex], generationBudget, screenWidth, screenHeight,
-                                                    innerThreadBudget);
+                                                    innerThreadBudget, runSeed);
             auto end = std::chrono::steady_clock::now();
 
             SweepRunResult &slot = resultsByConfig[configIndex][repeatIndex];
@@ -339,6 +368,9 @@ void RunParameterSweep(const SweepOptions &options)
     printf("] generations=%d repeats=%d mutationRate=%.2f mutationStrength=%.2f (%zu configs)\n",
            options.generationBudget, repeatCount, options.mutationRate, options.mutationStrength,
            configs.size());
+    printf("Seed: %llu%s — pass --seed=%llu to reproduce this exact run (independent of core count/scheduling).\n",
+           (unsigned long long)options.seed, options.seedSpecified ? "" : " (auto-generated)",
+           (unsigned long long)options.seed);
 
     mkdir(imageDir, 0755);
 
@@ -347,7 +379,7 @@ void RunParameterSweep(const SweepOptions &options)
     // opened afterward, for the (GL-only-safe-on-one-thread) image export.
     auto sweepStart = std::chrono::steady_clock::now();
     std::vector<std::vector<SweepRunResult>> resultsByConfig(configs.size(), std::vector<SweepRunResult>(repeatCount));
-    RunConfigsInParallel(configs, generationBudget, repeatCount, screenWidth, screenHeight, resultsByConfig);
+    RunConfigsInParallel(configs, generationBudget, repeatCount, screenWidth, screenHeight, options.seed, resultsByConfig);
     double totalSweepSeconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - sweepStart).count();
     printf("All configs trained in %.1fs total (wall clock)\n", totalSweepSeconds);
 
@@ -466,7 +498,7 @@ void RunParameterSweep(const SweepOptions &options)
         fprintf(summaryDoc, "## Usage\n\n");
         fprintf(summaryDoc, "```\n");
         fprintf(summaryDoc, "make dev    # build and play the game interactively\n");
-        fprintf(summaryDoc, "make sweep  # run this parameter sweep (override with ARGS=\"--populations=20,40,60,80 --generations=4000 --repeats=4\")\n");
+        fprintf(summaryDoc, "make sweep  # run this parameter sweep (override with ARGS=\"--populations=20,40,60,80 --generations=4000 --repeats=4 --seed=42\")\n");
         fprintf(summaryDoc, "```\n\n");
         fprintf(summaryDoc, "Each configuration below trained %d times for %d generations each. ", repeatCount, generationBudget);
         fprintf(summaryDoc, "populations=[");
@@ -476,6 +508,12 @@ void RunParameterSweep(const SweepOptions &options)
                 options.mutationRate, options.mutationStrength);
         fprintf(summaryDoc, "Trained in %.1fs total (wall clock, running all configs/repeats in parallel across CPU threads).\n\n",
                 totalSweepSeconds);
+        fprintf(summaryDoc, "Seed: `%llu` — every genome's episode and every mutation/crossover/selection decision is "
+                             "deterministically derived from this, so re-running with `--seed=%llu` (same code, same "
+                             "other flags) reproduces this exact run byte-for-byte, regardless of core count or thread "
+                             "scheduling. Different repeats of the same config still get independent draws (the seed "
+                             "is combined with the config/repeat index first).\n\n",
+                (unsigned long long)options.seed, (unsigned long long)options.seed);
         fprintf(summaryDoc, "Median is the primary ranking column — `bestFitness` is already a running-max over thousands of "
                          "episodes within one run, so a single lucky episode can inflate it; the median across repeats "
                          "resists that better than the mean does. Mean is shown alongside so an outlier-prone config "

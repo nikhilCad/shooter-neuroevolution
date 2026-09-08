@@ -123,5 +123,10 @@ Genome Crossover(const Genome &a, float fitnessA, const Genome &b, float fitness
 
 // NEAT's compatibility distance between two genomes, used to group the
 // population into species: c1*excess/N + c2*disjoint/N + c3*avgWeightDiff,
-// where N normalizes for genome size (1 for small genomes).
+// where N normalizes for genome size (1 for small genomes). Disabled
+// connections are ignored entirely — they have zero effect on Activate, so
+// two behaviorally-identical genomes shouldn't be pushed apart just because
+// one is carrying more disabled crossover leftovers than the other, and
+// counting them toward N let genome bloat crush excess/disjoint toward zero
+// once raw gene-list size passed the normalization cutoff.
 float GeneticDistance(const Genome &a, const Genome &b);
