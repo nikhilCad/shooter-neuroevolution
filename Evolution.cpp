@@ -10,9 +10,18 @@ namespace
     const uint32_t SAVE_MAGIC = 0x4C4F5645; // 'EVOL'
     const uint32_t SAVE_VERSION = 12;       // v12: replaced activeEnemyCount input with forwardConeEnemyCount
 
-    // Genomes below this GeneticDistance of a species' representative belong
-    // to that species. Standard NEAT-paper-ish default; not swept/tuned here.
-    const float COMPATIBILITY_THRESHOLD = 3.0f;
+    // Roughly this many genomes per species is the target SpeciatePopulation
+    // tries to maintain by nudging Evolution::compatibilityThreshold up/down
+    // each generation — scaled by population size (not a flat species count)
+    // so a small population still ends up with species comfortably above
+    // SPECIES_CHAMPION_MIN_SIZE on average, rather than every config in a
+    // sweep converging on the same absolute species count regardless of how
+    // many genomes actually have to be split across them.
+    const int TARGET_MEMBERS_PER_SPECIES = 16;
+    const int MIN_TARGET_SPECIES_COUNT = 4;
+    const float COMPATIBILITY_THRESHOLD_STEP = 0.1f;
+    const float COMPATIBILITY_THRESHOLD_MIN = 0.3f;
+    const float COMPATIBILITY_THRESHOLD_MAX = 20.0f;
     // A species needs at least this many members before its champion is
     // copied into the next generation unchanged.
     const int SPECIES_CHAMPION_MIN_SIZE = 5;
@@ -177,7 +186,7 @@ namespace
             Species *match = nullptr;
             for (auto &s : evo.species)
             {
-                if (GeneticDistance(evo.population[i], s.representative) < COMPATIBILITY_THRESHOLD)
+                if (GeneticDistance(evo.population[i], s.representative) < evo.compatibilityThreshold)
                 {
                     match = &s;
                     break;
@@ -200,6 +209,18 @@ namespace
 
         for (auto &s : evo.species)
             s.representative = evo.population[s.memberIndices[RandomInt(0, (int)s.memberIndices.size() - 1)]];
+
+        // Nudge the threshold toward whatever would have produced the target
+        // species count this generation — small, one-step-at-a-time
+        // adjustments so it settles rather than oscillates, since genome
+        // sizes (and so GeneticDistance's scale) keep drifting all run.
+        int targetSpeciesCount = std::max(MIN_TARGET_SPECIES_COUNT, evo.populationSize / TARGET_MEMBERS_PER_SPECIES);
+        if ((int)evo.species.size() > targetSpeciesCount)
+            evo.compatibilityThreshold = std::min(COMPATIBILITY_THRESHOLD_MAX,
+                                                  evo.compatibilityThreshold + COMPATIBILITY_THRESHOLD_STEP);
+        else if ((int)evo.species.size() < targetSpeciesCount)
+            evo.compatibilityThreshold = std::max(COMPATIBILITY_THRESHOLD_MIN,
+                                                  evo.compatibilityThreshold - COMPATIBILITY_THRESHOLD_STEP);
     }
 
     void UpdateSpeciesStagnation(Evolution &evo)

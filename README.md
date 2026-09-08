@@ -8,11 +8,16 @@ network's structure and weights are both evolved purely by playing the game.
 
 ```
 make dev    # build and play the game interactively (watch the agent train live)
-make sweep  # run a population-size parameter sweep (override with ARGS="--populations=20,40,60,80 --generations=4000 --repeats=4")
+make sweep  # run a population-size parameter sweep (override with ARGS="--populations=20,40,60,80 --generations=4000 --repeats=4 --seed=42")
+
+make sweep ARGS="--populations=80,160 --generations=6000 --repeats=4 --seed=42"
 ```
 
 `make sweep` writes its report to `RESULTS.md` (regenerated each run, along with `sweep_images/`)
-rather than touching this file.
+rather than touching this file. `--seed` makes a run reproducible byte-for-byte (regardless of core
+count or thread scheduling) — reuse the same value (`42` above is just an example, not special) to
+A/B a code change cleanly, or omit it for a fresh auto-generated seed, printed and saved into
+`RESULTS.md` either way so any run can be reproduced later.
 
 ## Documentation
 

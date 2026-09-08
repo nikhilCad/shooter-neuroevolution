@@ -29,6 +29,14 @@ struct Evolution
     std::vector<float> episodeScores; // this generation's score per genome, parallel to fitness
     std::vector<float> episodeTimes;  // this generation's survival time per genome, parallel to fitness
     std::vector<Species> species;
+    // Adapts every generation to target a stable species count (see
+    // TARGET_SPECIES_COUNT in Evolution.cpp) instead of staying fixed — the
+    // scale of GeneticDistance drifts as genome sizes evolve over a run, so a
+    // static threshold either collapses everything into one species or
+    // fragments into far too many, depending on when in the run you're
+    // looking. Not persisted across saves: it re-adapts within a handful of
+    // generations, so there's no need to carry it across a resume.
+    float compatibilityThreshold = 3.0f;
     InnovationTracker innovationTracker;
     Genome bestGenomeEver; // preserved into every generation regardless of species, so it can never be lost
 

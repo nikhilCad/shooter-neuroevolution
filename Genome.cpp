@@ -342,22 +342,44 @@ Genome Crossover(const Genome &a, float fitnessA, const Genome &b, float fitness
 
 float GeneticDistance(const Genome &a, const Genome &b)
 {
+    // Disabled connections are ignored entirely: they have zero effect on
+    // Activate, so two genomes that behave identically shouldn't be pushed
+    // apart just because one is carrying more disabled crossover leftovers
+    // than the other. This also matters for `n` below — counting disabled
+    // genes in genome size let crossover's gene bloat (see input.md/commit
+    // history: genomes observed with 200+ total connections but only ~20-30
+    // enabled) crush excess/disjoint toward zero once that raw count passed
+    // the normalization cutoff, leaving avgWeightDiff as nearly the only
+    // thing that could move the distance — which in practice never crossed
+    // COMPATIBILITY_THRESHOLD, so the whole population collapsed to one
+    // species and stayed there for an entire run.
     std::unordered_map<int, const ConnectionGene *> bByInnovation;
+    int enabledCountB = 0;
     for (const auto &c : b.connections)
-        bByInnovation[c.innovation] = &c;
+        if (c.enabled)
+        {
+            bByInnovation[c.innovation] = &c;
+            enabledCountB++;
+        }
 
     int maxInnovationA = 0;
     for (const auto &c : a.connections)
-        maxInnovationA = std::max(maxInnovationA, c.innovation);
+        if (c.enabled)
+            maxInnovationA = std::max(maxInnovationA, c.innovation);
     int maxInnovationB = 0;
     for (const auto &c : b.connections)
-        maxInnovationB = std::max(maxInnovationB, c.innovation);
+        if (c.enabled)
+            maxInnovationB = std::max(maxInnovationB, c.innovation);
     int lowerMaxInnovation = std::min(maxInnovationA, maxInnovationB);
 
     int disjoint = 0, excess = 0, matching = 0;
     float weightDiffSum = 0.0f;
+    int enabledCountA = 0;
     for (const auto &c : a.connections)
     {
+        if (!c.enabled)
+            continue;
+        enabledCountA++;
         auto it = bByInnovation.find(c.innovation);
         if (it != bByInnovation.end())
         {
@@ -378,7 +400,7 @@ float GeneticDistance(const Genome &a, const Genome &b)
             disjoint++;
     }
 
-    int largerGenomeSize = std::max((int)a.connections.size(), (int)b.connections.size());
+    int largerGenomeSize = std::max(enabledCountA, enabledCountB);
     float n = (largerGenomeSize < 20) ? 1.0f : (float)largerGenomeSize;
     float avgWeightDiff = matching > 0 ? weightDiffSum / matching : 0.0f;
 

@@ -18,10 +18,19 @@ struct SweepOptions
     // single lucky/unlucky run can't be mistaken for a config's real merit —
     // the sweep reports the median (and mean) across the repeats.
     int repeatCount = 4;
+
+    // Base seed every (config, repeat, generation, genome)'s randomness is
+    // deterministically derived from (see CombineSeed in RandomUtil.h) —
+    // same seed + same code + same CLI args reproduces identical results,
+    // regardless of core count or thread scheduling. Auto-generated (and
+    // printed, so it can be reused) if --seed isn't given.
+    uint64_t seed = 0;
+    bool seedSpecified = false;
 };
 
 // Recognized flags: --populations=20,40,60  --generations=4000
 //                    --mutation-rate=0.15  --mutation-strength=0.5  --repeats=4
+//                    --seed=12345 (omit for a fresh, auto-generated, reported seed)
 SweepOptions ParseSweepOptions(int argc, char **argv);
 
 // Runs every population size back-to-back, each for options.generationBudget
