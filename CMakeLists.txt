@@ -18,7 +18,7 @@ add_executable(raylib_cpp
     main.cpp
     Player.cpp
     Enemy.cpp
-    NeuralNetwork.cpp
+    Genome.cpp
     Evolution.cpp
     PlayerAgent.cpp
     Simulation.cpp

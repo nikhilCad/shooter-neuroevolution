@@ -16,8 +16,6 @@
 struct SweepConfig
 {
     int populationSize;
-    int hiddenSize;
-    int eliteCount;
     float mutationRate;
     float mutationStrength;
 };
@@ -44,12 +42,8 @@ SweepOptions ParseSweepOptions(int argc, char **argv)
 
         if (arg.rfind("--populations=", 0) == 0)
             options.populationSizes = ParseIntList(valueAfter("--populations="));
-        else if (arg.rfind("--hidden=", 0) == 0)
-            options.hiddenSizes = ParseIntList(valueAfter("--hidden="));
         else if (arg.rfind("--generations=", 0) == 0)
             options.generationBudget = std::atoi(valueAfter("--generations=").c_str());
-        else if (arg.rfind("--elite-ratio=", 0) == 0)
-            options.eliteRatio = (float)std::atof(valueAfter("--elite-ratio=").c_str());
         else if (arg.rfind("--mutation-rate=", 0) == 0)
             options.mutationRate = (float)std::atof(valueAfter("--mutation-rate=").c_str());
         else if (arg.rfind("--mutation-strength=", 0) == 0)
@@ -65,23 +59,19 @@ static std::vector<SweepConfig> BuildSweepConfigs(const SweepOptions &options)
 {
     std::vector<SweepConfig> configs;
     for (int populationSize : options.populationSizes)
-    {
-        int eliteCount = std::max(1, (int)std::round(populationSize * options.eliteRatio));
-        for (int hiddenSize : options.hiddenSizes)
-            configs.push_back({populationSize, hiddenSize, eliteCount, options.mutationRate, options.mutationStrength});
-    }
+        configs.push_back({populationSize, options.mutationRate, options.mutationStrength});
     return configs;
 }
 
 static std::string SweepConfigLabel(const SweepConfig &config)
 {
-    return "pop" + std::to_string(config.populationSize) + "_hidden" + std::to_string(config.hiddenSize);
+    return "pop" + std::to_string(config.populationSize);
 }
 
 static Evolution RunSweepConfig(const SweepConfig &config, int generationBudget, int screenWidth, int screenHeight)
 {
-    Evolution evolution = CreateEvolution(PLAYER_AGENT_INPUT_SIZE, config.hiddenSize, PLAYER_AGENT_OUTPUT_SIZE,
-                                           config.populationSize, config.eliteCount,
+    Evolution evolution = CreateEvolution(PLAYER_AGENT_INPUT_SIZE, PLAYER_AGENT_OUTPUT_SIZE,
+                                           config.populationSize,
                                            config.mutationRate, config.mutationStrength);
 
     Player player;
@@ -249,11 +239,8 @@ void RunParameterSweep(const SweepOptions &options)
     printf("Sweep options: populations=[");
     for (size_t i = 0; i < options.populationSizes.size(); i++)
         printf("%s%d", i == 0 ? "" : ",", options.populationSizes[i]);
-    printf("] hidden=[");
-    for (size_t i = 0; i < options.hiddenSizes.size(); i++)
-        printf("%s%d", i == 0 ? "" : ",", options.hiddenSizes[i]);
-    printf("] generations=%d repeats=%d eliteRatio=%.2f mutationRate=%.2f mutationStrength=%.2f (%zu configs)\n",
-           options.generationBudget, repeatCount, options.eliteRatio, options.mutationRate, options.mutationStrength,
+    printf("] generations=%d repeats=%d mutationRate=%.2f mutationStrength=%.2f (%zu configs)\n",
+           options.generationBudget, repeatCount, options.mutationRate, options.mutationStrength,
            configs.size());
 
     mkdir(imageDir, 0755);
@@ -285,8 +272,8 @@ void RunParameterSweep(const SweepOptions &options)
         CloseWindow();
         return;
     }
-    fprintf(out, "%-6s %-6s %-6s %-8s %-8s %-8s | %-9s %-10s %-10s %-10s %-10s %-10s %-10s %-10s\n",
-            "pop", "hidden", "elite", "mutRate", "mutStr", "repeats", "gens",
+    fprintf(out, "%-6s %-8s %-8s %-8s | %-9s %-10s %-10s %-10s %-10s %-10s %-10s %-10s\n",
+            "pop", "mutRate", "mutStr", "repeats", "gens",
             "medFit", "avgFit", "medScore", "avgScore", "medTime", "avgTime", "totalSec");
     fflush(out);
 
@@ -303,8 +290,8 @@ void RunParameterSweep(const SweepOptions &options)
         const ConfigSummary &summary = summaries[i];
         std::string label = SweepConfigLabel(config);
 
-        fprintf(out, "%-6d %-6d %-6d %-8.2f %-8.2f %-8d | %-9d %-10.1f %-10.1f %-10d %-10.1f %-10.1f %-10.1f %-10.1f\n",
-                config.populationSize, config.hiddenSize, config.eliteCount,
+        fprintf(out, "%-6d %-8.2f %-8.2f %-8d | %-9d %-10.1f %-10.1f %-10d %-10.1f %-10.1f %-10.1f %-10.1f\n",
+                config.populationSize,
                 config.mutationRate, config.mutationStrength, repeatCount,
                 summary.generationsCompleted, summary.medianFitness, summary.meanFitness,
                 summary.medianScore, summary.meanScore, summary.medianTime, summary.meanTime,
@@ -313,8 +300,6 @@ void RunParameterSweep(const SweepOptions &options)
 
         std::string imagePath = std::string(imageDir) + "/" + label + ".png";
         std::string title = "pop=" + std::to_string(config.populationSize) +
-                             " hidden=" + std::to_string(config.hiddenSize) +
-                             " elite=" + std::to_string(config.eliteCount) +
                              " (median run of " + std::to_string(repeatCount) +
                              ", " + std::to_string(summary.generationsCompleted) + " generations)";
         const Evolution &representativeEvolution = resultsByConfig[i][summary.representativeRepeat].evolution;
@@ -334,31 +319,28 @@ void RunParameterSweep(const SweepOptions &options)
         fprintf(readme, "## Usage\n\n");
         fprintf(readme, "```\n");
         fprintf(readme, "make dev    # build and play the game interactively\n");
-        fprintf(readme, "make sweep  # run this parameter sweep (override with ARGS=\"--populations=20,40 --hidden=12,24 --generations=4000 --repeats=4\")\n");
+        fprintf(readme, "make sweep  # run this parameter sweep (override with ARGS=\"--populations=20,40,60,80 --generations=4000 --repeats=4\")\n");
         fprintf(readme, "```\n\n");
         fprintf(readme, "Each configuration below trained %d times for %d generations each. ", repeatCount, generationBudget);
         fprintf(readme, "populations=[");
         for (size_t i = 0; i < options.populationSizes.size(); i++)
             fprintf(readme, "%s%d", i == 0 ? "" : ",", options.populationSizes[i]);
-        fprintf(readme, "] hidden=[");
-        for (size_t i = 0; i < options.hiddenSizes.size(); i++)
-            fprintf(readme, "%s%d", i == 0 ? "" : ",", options.hiddenSizes[i]);
-        fprintf(readme, "] eliteRatio=%.2f mutationRate=%.2f mutationStrength=%.2f\n\n",
-                options.eliteRatio, options.mutationRate, options.mutationStrength);
+        fprintf(readme, "] mutationRate=%.2f mutationStrength=%.2f\n\n",
+                options.mutationRate, options.mutationStrength);
         fprintf(readme, "Trained in %.1fs total (wall clock, running all configs/repeats in parallel across CPU threads).\n\n",
                 totalSweepSeconds);
         fprintf(readme, "Median is the primary ranking column — `bestFitness` is already a running-max over thousands of "
                          "episodes within one run, so a single lucky episode can inflate it; the median across repeats "
                          "resists that better than the mean does. Mean is shown alongside so an outlier-prone config "
                          "(mean and median far apart) is visible rather than hidden.\n\n");
-        fprintf(readme, "| Population | Hidden | Elites | Repeats | Generations | Median Fitness | Mean Fitness | "
+        fprintf(readme, "| Population | Repeats | Generations | Median Fitness | Mean Fitness | "
                          "Median Score | Mean Score | Median Time | Mean Time | Total Train Time (s) |\n");
-        fprintf(readme, "|---|---|---|---|---|---|---|---|---|---|---|---|\n");
+        fprintf(readme, "|---|---|---|---|---|---|---|---|---|---|\n");
         for (const auto &row : readmeRows)
         {
             const ConfigSummary &s = row.summary;
-            fprintf(readme, "| %d | %d | %d | %d | %d | %.1f | %.1f | %d | %.1f | %.1f | %.1f | %.1f |\n",
-                    s.config.populationSize, s.config.hiddenSize, s.config.eliteCount, repeatCount,
+            fprintf(readme, "| %d | %d | %d | %.1f | %.1f | %d | %.1f | %.1f | %.1f | %.1f |\n",
+                    s.config.populationSize, repeatCount,
                     s.generationsCompleted, s.medianFitness, s.meanFitness, s.medianScore, s.meanScore,
                     s.medianTime, s.meanTime, s.totalTrainSeconds);
         }

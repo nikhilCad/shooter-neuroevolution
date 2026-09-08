@@ -65,12 +65,13 @@ static const float REWARD_DEATH_PENALTY = 30.0f;
 static const float REWARD_ENEMY_TOUCH_PENALTY = 25.0f;
 
 // --- Evolution config (interactive-play defaults; the sweep overrides these) ---
-// pop=80/hidden=36 was the empirical winner of a 16-config sweep (see
-// README.md): best fitness 3735.7, best score 14700, best time 200.4s —
-// clear of every other combination tried.
+// population=80 was the empirical winner of a 16-config sweep of the old
+// fixed-topology network (see README.md); kept as the NEAT population size
+// too. There's no HIDDEN_SIZE/ELITE_COUNT anymore — NEAT genomes start with
+// zero hidden nodes and grow structure via mutation, and elitism is now
+// per-species (see SPECIES_CHAMPION_MIN_SIZE in Evolution.cpp) plus one
+// always-preserved all-time-best genome, rather than a flat top-N.
 static const int POPULATION_SIZE = 80;
-static const int HIDDEN_SIZE = 36;
-static const int ELITE_COUNT = 16;
 static const float MUTATION_RATE = 0.15f;
 static const float MUTATION_STRENGTH = 0.5f;
 
