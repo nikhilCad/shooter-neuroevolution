@@ -66,7 +66,7 @@ static const float REWARD_ENEMY_TOUCH_PENALTY = 25.0f;
 
 // --- Evolution config (interactive-play defaults; the sweep overrides these) ---
 // population=80 was the empirical winner of a 16-config sweep of the old
-// fixed-topology network (see README.md); kept as the NEAT population size
+// fixed-topology network (see archive/v1-fixed-topology/RESULTS.md); kept as the NEAT population size
 // too. There's no HIDDEN_SIZE/ELITE_COUNT anymore — NEAT genomes start with
 // zero hidden nodes and grow structure via mutation, and elitism is now
 // per-species (see SPECIES_CHAMPION_MIN_SIZE in Evolution.cpp) plus one

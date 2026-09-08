@@ -277,12 +277,12 @@ void RunParameterSweep(const SweepOptions &options)
             "medFit", "avgFit", "medScore", "avgScore", "medTime", "avgTime", "totalSec");
     fflush(out);
 
-    struct ReadmeRow
+    struct SummaryRow
     {
         ConfigSummary summary;
         std::string imagePath;
     };
-    std::vector<ReadmeRow> readmeRows;
+    std::vector<SummaryRow> summaryRows;
 
     for (size_t i = 0; i < configs.size(); i++)
     {
@@ -305,56 +305,56 @@ void RunParameterSweep(const SweepOptions &options)
         const Evolution &representativeEvolution = resultsByConfig[i][summary.representativeRepeat].evolution;
         ExportGenerationHistoryImage(representativeEvolution, title.c_str(), imagePath.c_str());
 
-        readmeRows.push_back({summary, imagePath});
+        summaryRows.push_back({summary, imagePath});
     }
 
     fclose(out);
     CloseWindow();
 
-    const char *readmePath = "README.md";
-    FILE *readme = fopen(readmePath, "w");
-    if (readme)
+    const char *summaryDocPath = "RESULTS.md";
+    FILE *summaryDoc = fopen(summaryDocPath, "w");
+    if (summaryDoc)
     {
-        fprintf(readme, "# Parameter Sweep Results\n\n");
-        fprintf(readme, "See [ARCHITECTURE.md](ARCHITECTURE.md) for the current NEAT design. "
+        fprintf(summaryDoc, "# Parameter Sweep Results\n\n");
+        fprintf(summaryDoc, "See [ARCHITECTURE.md](ARCHITECTURE.md) for the current NEAT design. "
                          "An earlier fixed-topology approach's architecture, sweep results, and graphs are "
                          "preserved in [archive/v1-fixed-topology/](archive/v1-fixed-topology/) for reference.\n\n");
-        fprintf(readme, "## Usage\n\n");
-        fprintf(readme, "```\n");
-        fprintf(readme, "make dev    # build and play the game interactively\n");
-        fprintf(readme, "make sweep  # run this parameter sweep (override with ARGS=\"--populations=20,40,60,80 --generations=4000 --repeats=4\")\n");
-        fprintf(readme, "```\n\n");
-        fprintf(readme, "Each configuration below trained %d times for %d generations each. ", repeatCount, generationBudget);
-        fprintf(readme, "populations=[");
+        fprintf(summaryDoc, "## Usage\n\n");
+        fprintf(summaryDoc, "```\n");
+        fprintf(summaryDoc, "make dev    # build and play the game interactively\n");
+        fprintf(summaryDoc, "make sweep  # run this parameter sweep (override with ARGS=\"--populations=20,40,60,80 --generations=4000 --repeats=4\")\n");
+        fprintf(summaryDoc, "```\n\n");
+        fprintf(summaryDoc, "Each configuration below trained %d times for %d generations each. ", repeatCount, generationBudget);
+        fprintf(summaryDoc, "populations=[");
         for (size_t i = 0; i < options.populationSizes.size(); i++)
-            fprintf(readme, "%s%d", i == 0 ? "" : ",", options.populationSizes[i]);
-        fprintf(readme, "] mutationRate=%.2f mutationStrength=%.2f\n\n",
+            fprintf(summaryDoc, "%s%d", i == 0 ? "" : ",", options.populationSizes[i]);
+        fprintf(summaryDoc, "] mutationRate=%.2f mutationStrength=%.2f\n\n",
                 options.mutationRate, options.mutationStrength);
-        fprintf(readme, "Trained in %.1fs total (wall clock, running all configs/repeats in parallel across CPU threads).\n\n",
+        fprintf(summaryDoc, "Trained in %.1fs total (wall clock, running all configs/repeats in parallel across CPU threads).\n\n",
                 totalSweepSeconds);
-        fprintf(readme, "Median is the primary ranking column — `bestFitness` is already a running-max over thousands of "
+        fprintf(summaryDoc, "Median is the primary ranking column — `bestFitness` is already a running-max over thousands of "
                          "episodes within one run, so a single lucky episode can inflate it; the median across repeats "
                          "resists that better than the mean does. Mean is shown alongside so an outlier-prone config "
                          "(mean and median far apart) is visible rather than hidden.\n\n");
-        fprintf(readme, "| Population | Repeats | Generations | Median Fitness | Mean Fitness | "
+        fprintf(summaryDoc, "| Population | Repeats | Generations | Median Fitness | Mean Fitness | "
                          "Median Score | Mean Score | Median Time | Mean Time | Total Train Time (s) |\n");
-        fprintf(readme, "|---|---|---|---|---|---|---|---|---|---|\n");
-        for (const auto &row : readmeRows)
+        fprintf(summaryDoc, "|---|---|---|---|---|---|---|---|---|---|\n");
+        for (const auto &row : summaryRows)
         {
             const ConfigSummary &s = row.summary;
-            fprintf(readme, "| %d | %d | %d | %.1f | %.1f | %d | %.1f | %.1f | %.1f | %.1f |\n",
+            fprintf(summaryDoc, "| %d | %d | %d | %.1f | %.1f | %d | %.1f | %.1f | %.1f | %.1f |\n",
                     s.config.populationSize, repeatCount,
                     s.generationsCompleted, s.medianFitness, s.meanFitness, s.medianScore, s.meanScore,
                     s.medianTime, s.meanTime, s.totalTrainSeconds);
         }
-        fprintf(readme, "\n");
-        for (const auto &row : readmeRows)
+        fprintf(summaryDoc, "\n");
+        for (const auto &row : summaryRows)
         {
             std::string label = SweepConfigLabel(row.summary.config);
-            fprintf(readme, "## %s\n\n![%s](%s)\n\n", label.c_str(), label.c_str(), row.imagePath.c_str());
+            fprintf(summaryDoc, "## %s\n\n![%s](%s)\n\n", label.c_str(), label.c_str(), row.imagePath.c_str());
         }
-        fclose(readme);
+        fclose(summaryDoc);
     }
 
-    printf("Sweep complete. Results in %s, graphs in %s/, summary in %s\n", resultsPath, imageDir, readmePath);
+    printf("Sweep complete. Results in %s, graphs in %s/, summary in %s\n", resultsPath, imageDir, summaryDocPath);
 }

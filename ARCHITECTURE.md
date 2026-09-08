@@ -114,7 +114,7 @@ Each species' offspring count is proportional to its total fitness-shared fitnes
 
 **HistoryGraph.h/.cpp** — the fitness/score/time line graphs. same drawing code renders the in-game Tab overlay and the sweep's exported PNGs.
 
-**ParameterSweep.h/.cpp** — `--sweep` mode. CLI flag parsing, runs configs (population size) across worker threads, writes `sweep_results.txt` + `README.md` + `sweep_images/`.
+**ParameterSweep.h/.cpp** — `--sweep` mode. CLI flag parsing, runs configs (population size) across worker threads, writes `sweep_results.txt` + `RESULTS.md` + `sweep_images/`.
 
 **RandomUtil.h** — thread-local RNG. exists because the sweep runs configs in parallel and raylib's `GetRandomValue` isn't thread-safe.
 
