@@ -6,10 +6,12 @@
 #include <vector>
 
 // How many of the closest enemies the network gets per-enemy detail on (dx,
-// dy, distance, health each) — beyond this count, enemies are invisible to
-// the network except through the aggregate active-enemy-count input.
+// dy, distance, health, velocity x/y each) — beyond this count, enemies are
+// invisible to the network except through the aggregate active-enemy-count
+// input. Velocity is included so the network can learn to lead moving
+// targets instead of only ever aiming at their current position.
 const int PLAYER_AGENT_NEAREST_ENEMY_COUNT = 4;
-const int PLAYER_AGENT_FEATURES_PER_ENEMY = 4;
+const int PLAYER_AGENT_FEATURES_PER_ENEMY = 6;
 const int PLAYER_AGENT_INPUT_SIZE = 3 + PLAYER_AGENT_NEAREST_ENEMY_COUNT * PLAYER_AGENT_FEATURES_PER_ENEMY + 1;
 const int PLAYER_AGENT_OUTPUT_SIZE = 5;
 

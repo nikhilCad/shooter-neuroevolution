@@ -4,6 +4,7 @@
 struct Enemy
 {
     Vector2 position; // top-left corner
+    Vector2 velocity; // current world-space velocity, set each UpdateEnemy call
     float size;
     float speed;
     int health;

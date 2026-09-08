@@ -9,7 +9,7 @@
 namespace
 {
     const uint32_t SAVE_MAGIC = 0x4C4F5645; // 'EVOL'
-    const uint32_t SAVE_VERSION = 7;        // v7: 16-config sweep winner: population 60->80, elites 12->16, hidden layer 12->36
+    const uint32_t SAVE_VERSION = 8;        // v8: added enemy velocity (vx,vy) to the per-enemy input features, so old saves' input size no longer matches
 
     template <typename T>
     void WriteValue(FILE *file, const T &value)
@@ -121,10 +121,12 @@ static void EvolvePopulation(Evolution &evo)
                                : evo.recentBestTrend * 0.9f + thisGenBest * 0.1f;
     evo.stagnantGenerations = improved ? 0 : evo.stagnantGenerations + 1;
 
-    // Ramps from 1x (no boost) up to 2x over ~50 stagnant generations, then
-    // holds there — enough of a kick to escape a shallow local optimum
-    // without turning reproduction into mostly-random search.
-    float stagnationBoost = 1.0f + std::min(evo.stagnantGenerations / 50.0f, 1.0f);
+    // Ramps from 1x (no boost) up to 2x over the first ~50 stagnant
+    // generations — enough of a kick to escape a shallow local optimum
+    // without turning reproduction into mostly-random search — then keeps
+    // climbing (much more slowly) up to 6x by ~250 stagnant generations for
+    // the rare, much deeper plateau that 2x alone can't break out of.
+    float stagnationBoost = 1.0f + std::min(evo.stagnantGenerations / 50.0f, 5.0f);
 
     std::vector<NeuralNetwork> nextGeneration;
     nextGeneration.reserve(evo.populationSize);
