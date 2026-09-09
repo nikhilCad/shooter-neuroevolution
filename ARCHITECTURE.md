@@ -21,7 +21,7 @@
 
 The brain is a NEAT genome evaluated as a feed-forward graph (topological evaluation with memoization — see `Activate` in [Genome.cpp](Genome.cpp)), not a fixed dense layer. Hidden nodes only exist if mutation has grown them; a brand new genome has none. Sizes are computed from `PLAYER_AGENT_*` constants in [PlayerAgent.h](PlayerAgent.h), so they always match what `GetPlayerState`/`DecidePlayerAction` in [PlayerAgent.cpp](PlayerAgent.cpp) actually build/decode.
 
-**Inputs — 40 total** (`PLAYER_AGENT_INPUT_SIZE`): 10 player features, 7 features for each of the 4 nearest enemies (closest first), 2 aggregate features.
+**Inputs — 41 total** (`PLAYER_AGENT_INPUT_SIZE`): 10 player features, 7 features for each of the 4 nearest enemies (closest first), 3 aggregate features.
 
 | # | Feature | Normalization |
 |---|---|---|
@@ -41,8 +41,9 @@ The brain is a NEAT genome evaluated as a feed-forward graph (topological evalua
 | 31–37 | 4th-nearest enemy: same 7 features | same |
 | 38 | nearby enemy count (within `PLAYER_AGENT_LOCAL_THREAT_RADIUS`) | `min(count / 5, 1.0)` |
 | 39 | forward-cone enemy count (within `PLAYER_AGENT_FORWARD_CONE_COS` of the aim direction) | `min(count / 3, 1.0)` |
+| 40 | reverse-move-cone enemy count (same cone width, opposite the *movement* direction) | `min(count / 3, 1.0)` |
 
-Enemy position and velocity are rotated by `-player.rotation` before being fed in, so `bodyX` is "how far ahead of my gun" and `bodyY` is "how far to the side" — a direct aim-error signal that doesn't depend on which way the player happens to be facing. Closing speed is the component of the enemy's velocity aimed straight at the player (positive = approaching), which a fast-but-distant enemy can score higher on than a slow-but-close one — a distinction raw distance and body-frame velocity don't capture on their own. An empty enemy slot (fewer than 4 enemies alive) zeroes its 7 features except distance, which is set to `1.0` ("maximally far away") so the network can tell "no enemy here" apart from "an enemy is very close." The nearby-enemy-count aggregate is a localized "am I currently surrounded" signal; the forward-cone-count aggregate is a "would committing to this aim direction actually line up a shot" signal, checked against every active enemy (not just the 4 detailed slots) since a lined-up enemy further out still matters for that decision.
+Enemy position and velocity are rotated by `-player.rotation` before being fed in, so `bodyX` is "how far ahead of my gun" and `bodyY` is "how far to the side" — a direct aim-error signal that doesn't depend on which way the player happens to be facing. Closing speed is the component of the enemy's velocity aimed straight at the player (positive = approaching), which a fast-but-distant enemy can score higher on than a slow-but-close one — a distinction raw distance and body-frame velocity don't capture on their own. An empty enemy slot (fewer than 4 enemies alive) zeroes its 7 features except distance, which is set to `1.0` ("maximally far away") so the network can tell "no enemy here" apart from "an enemy is very close." The nearby-enemy-count aggregate is a localized "am I currently surrounded" signal; forward-cone-count is "would committing to this aim direction actually line up a shot"; reverse-move-cone-count is the same idea but relative to where the player is currently *moving*, not aiming — "could I shoot this one without changing course," since move and aim are independent outputs and nothing else surfaces that opportunity (zero while near-stationary).
 
 **Outputs — 5 total** (`PLAYER_AGENT_OUTPUT_SIZE`), decoded in `DecidePlayerAction`:
 
@@ -58,14 +59,14 @@ If both aim outputs are ~0, the player keeps its current facing rather than snap
 
 ```mermaid
 flowchart LR
-    subgraph Inputs["Input layer — 40 nodes"]
+    subgraph Inputs["Input layer — 41 nodes"]
         direction TB
         P["Player — 10<br/>x, y, health, vx, vy,<br/>facing cos/sin, wall dist x/y,<br/>touch-cooldown remaining"]
         E0["Nearest enemy #1 — 7<br/>bodyX, bodyY, dist, health,<br/>bodyVX, bodyVY, closing speed"]
         E1["Nearest enemy #2 — 7"]
         E2["Nearest enemy #3 — 7"]
         E3["Nearest enemy #4 — 7"]
-        C["Nearby count + forward-cone count — 2"]
+        C["Nearby + forward-cone + reverse-move-cone count — 3"]
     end
     Inputs --> G["Hidden structure — grows from zero<br/>via MutateAddNode/MutateAddConnection"]
     G --> Outputs
@@ -123,6 +124,10 @@ Each species' offspring count is proportional to its total fitness-shared fitnes
 **Reproducible via `--seed`**: every genome's episode is seeded from `CombineSeed(runSeed, generation, genomeIndex)` (see `RandomUtil.h`), and mutation/crossover/selection (which run on `RunSweepConfig`'s own thread) are reseeded from `CombineSeed(runSeed, generation, -1)` right before each `EvolvePopulation`-triggering call — both independent of which physical thread executed anything, so the same `--seed` reproduces byte-identical results regardless of core count or scheduling (verified: two runs with the same seed produced identical fitness/score/time down to every decimal; only wall-clock timing differed). Each `(config, repeat)` gets its own derived seed, so repeats stay statistically independent within one sweep. Omit `--seed` for a fresh, auto-generated seed — it's always printed and written into `RESULTS.md` so any run can be reproduced later.
 
 `RunParameterSweep` also computes an **input-usage report** (`ComputeInputUsageStats`): average `|weight|` of enabled connections from each real input, across every genome in every config/repeat's *final* population, aggregated over the whole sweep — a rough "does the evolved population actually use this input" signal, written to `RESULTS.md` as a full ranked table plus a most/least-relied-on callout. It also finds the single fittest genome across the entire sweep and exports its network diagram (`GenomeVisualizer`'s `ExportGenomeVisualizationImage`) as `sweep_images/fittest_genome.png`, embedded in `RESULTS.md`, alongside that run's diagnostics: the fittest episode's reward broken down by source (survival/hits/kills/touch-penalty/death-penalty — `RunSweepConfig` tracks this exact episode's `EpisodeOutcome`, not a replay under new RNG draws), shot accuracy, species count, population complexity, and peak stagnation depth (all read straight from that run's `Evolution` history fields).
+
+**Checkpoint.h/.cpp** — `--checkpoint-train` mode. Trains one fresh population headlessly (same deterministic-seeding scheme as the sweep) and, at each requested generation, saves the current all-time-best genome as `gen_<N>.genome`, plus — tracked separately, since fitness and raw score routinely favor different genomes — whichever genome/episode has set the highest score so far, as `gen_score_<N>.genome` with a paired `gen_score_<N>.seed` (the exact seed reproducing that specific episode).
+
+**GifRecorder.h/.cpp** — `--record-gif`/`--record-checkpoint-gifs`. Replays a saved genome deterministically (same `SimulateStep` loop as everywhere else) and captures frames to an offscreen render texture, exporting each as a PNG and shelling out to ImageMagick (`magick ... -layers Optimize ...`) to assemble them into an animated GIF — `-layers Optimize` diffs each frame against the previous one instead of re-quantizing a full frame from scratch every time, which is the difference between minutes and the better part of an hour for an animation with this much static background. A `gen_score_<N>.genome`'s paired `.seed` sidecar is used automatically unless `--seed` is passed explicitly, so recording "the one specific genome/RNG combo that set a record" is a single command.
 
 **RandomUtil.h** — thread-local RNG. exists because the sweep runs configs in parallel and raylib's `GetRandomValue` isn't thread-safe. `SeedRandomEngine`/`CombineSeed` reseed a thread's RNG deterministically from an arbitrary combination of integers (base seed, generation, genome index, ...) — what makes the sweep's `--seed` reproducible regardless of thread scheduling.
 

@@ -104,3 +104,20 @@ direction actually line up a shot."
   some situations (a cluster can also mean "retreat," not "commit"). The input just
   makes the *option* to reason about lined-up shots directly available; what to do
   with it is left to evolution.
+
+## Added reverse-move-cone enemy count (40 → 41 inputs)
+
+Added: reverse-move-cone enemy count — how many active enemies sit within the same
+`PLAYER_AGENT_FORWARD_CONE_COS` cone width as the existing forward-cone feature, but
+centered on the direction directly opposite the player's *current movement*, not its
+aim/facing. Zero while near-stationary (no movement direction to be "opposite" of).
+
+**Why:** watching a trained agent (gen 50000 of a long run), it would consistently
+retreat from a frontal threat, then circle around to *face* a trailing enemy before
+shooting it, instead of just snap-aiming backward and shooting while continuing to
+flee — even though `move` and `aim` are fully independent outputs, so that behavior
+costs nothing movement-wise. The existing forward-cone input is relative to aim/
+facing, not travel direction, so there was no signal at all for "something's
+positioned such that I could shoot it right now without changing course." This adds
+that signal directly rather than leaving the network to reconstruct it (comparing
+enemy position against velocity/movement, not just facing) on its own.

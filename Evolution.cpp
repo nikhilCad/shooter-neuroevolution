@@ -8,7 +8,7 @@
 namespace
 {
     const uint32_t SAVE_MAGIC = 0x4C4F5645; // 'EVOL'
-    const uint32_t SAVE_VERSION = 12;       // v12: replaced activeEnemyCount input with forwardConeEnemyCount
+    const uint32_t SAVE_VERSION = 13;       // v13: added reverseMoveConeEnemyCount input (40 -> 41 inputs)
 
     // Roughly this many genomes per species is the target SpeciatePopulation
     // tries to maintain by nudging Evolution::compatibilityThreshold up/down
