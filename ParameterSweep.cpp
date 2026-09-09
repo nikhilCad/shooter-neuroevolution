@@ -166,6 +166,10 @@ struct SweepRunResult
     Evolution evolution;
     double trainSeconds;
     EpisodeOutcome bestOutcome;
+    // The exact seed this (config, repeat) trained under — pass it to
+    // --checkpoint-train (same seed/population/mutation-rate/mutation-strength)
+    // to reproduce this run's whole trajectory, generation by generation.
+    uint64_t runSeed;
 };
 
 // Runs every (config, repeat) pair on a pool of worker threads, pulling the
@@ -226,6 +230,7 @@ static void RunConfigsInParallel(const std::vector<SweepConfig> &configs, int ge
             slot.evolution = std::move(output.evolution);
             slot.bestOutcome = output.bestOutcome;
             slot.trainSeconds = std::chrono::duration<double>(end - start).count();
+            slot.runSeed = runSeed;
 
             size_t doneSoFar = completedCount.fetch_add(1) + 1;
             std::string label = SweepConfigLabel(configs[configIndex]);
@@ -444,6 +449,8 @@ void RunParameterSweep(const SweepOptions &options)
     const EpisodeOutcome *fittestOutcome = nullptr;
     std::string fittestLabel;
     size_t fittestRepeat = 0;
+    size_t fittestConfigIndex = 0;
+    uint64_t fittestRunSeed = 0;
     for (size_t i = 0; i < resultsByConfig.size(); i++)
         for (size_t r = 0; r < resultsByConfig[i].size(); r++)
         {
@@ -454,8 +461,26 @@ void RunParameterSweep(const SweepOptions &options)
                 fittestOutcome = &resultsByConfig[i][r].bestOutcome;
                 fittestLabel = SweepConfigLabel(configs[i]);
                 fittestRepeat = r;
+                fittestConfigIndex = i;
+                fittestRunSeed = resultsByConfig[i][r].runSeed;
             }
         }
+
+    // Reproduces the fittest (config, repeat)'s whole trajectory generation
+    // by generation, ready to paste into `make recordings ARGS="..."` —
+    // --checkpoint-train uses the exact same seed-derivation scheme as the
+    // sweep (see RunSweepConfig/RunCheckpointTraining), so the same
+    // population/mutation-rate/mutation-strength/seed reproduces it exactly.
+    std::string fittestReproCommand;
+    if (fittestEvolution)
+    {
+        const SweepConfig &fittestConfig = configs[fittestConfigIndex];
+        char buffer[256];
+        snprintf(buffer, sizeof(buffer), "--population=%d --mutation-rate=%.2f --mutation-strength=%.2f --seed=%llu",
+                 fittestConfig.populationSize, fittestConfig.mutationRate, fittestConfig.mutationStrength,
+                 (unsigned long long)fittestRunSeed);
+        fittestReproCommand = buffer;
+    }
 
     std::string fittestImagePath = std::string(imageDir) + "/fittest_genome.png";
     if (fittestEvolution)
@@ -483,6 +508,12 @@ void RunParameterSweep(const SweepOptions &options)
     printf("Most relied-on input: %s (avg |weight| %.3f). Least relied-on: %s (avg |weight| %.3f).\n",
            mostReliedLabel.c_str(), AvgAbsWeight(inputUsage, inputRanking.front()),
            leastReliedLabel.c_str(), AvgAbsWeight(inputUsage, inputRanking.back()));
+
+    if (fittestEvolution)
+        printf("Fittest genome overall: %s run %zu (fitness %.1f). Reproduce it with:\n"
+               "  make recordings ARGS=\"%s --checkpoints=1,...,%d\"\n",
+               fittestLabel.c_str(), fittestRepeat + 1, fittestEvolution->bestFitnessEver,
+               fittestReproCommand.c_str(), generationBudget);
 
     fclose(out);
     CloseWindow();
@@ -565,6 +596,9 @@ void RunParameterSweep(const SweepOptions &options)
                     fittestLabel.c_str(), fittestRepeat + 1, fittestEvolution->bestFitnessEver,
                     fittestEvolution->bestScoreEver, fittestEvolution->bestTimeEver);
             fprintf(summaryDoc, "![fittest genome](%s)\n\n", fittestImagePath.c_str());
+            fprintf(summaryDoc, "**Reproduce this run's whole trajectory** (checkpoints + gifs at each "
+                                 "generation milestone):\n\n```\nmake recordings ARGS=\"%s "
+                                 "--checkpoints=1,...,%d\"\n```\n\n", fittestReproCommand.c_str(), generationBudget);
 
             fprintf(summaryDoc, "### Diagnostics for that run\n\n");
 
@@ -595,7 +629,7 @@ void RunParameterSweep(const SweepOptions &options)
                         fittestEvolution->avgHiddenNodeCountHistory.back(),
                         fittestEvolution->avgConnectionCountHistory.back());
             }
-            float peakBoost = 1.0f + std::min(fittestEvolution->maxStagnantGenerationsEver / 50.0f, 5.0f);
+            float peakBoost = 1.0f + std::min(fittestEvolution->maxStagnantGenerationsEver / 50.0f, 2.0f);
             fprintf(summaryDoc, "**Deepest stagnation reached:** %d generations without improving "
                                  "(mutation/structural-mutation boost peaked around %.1fx).\n\n",
                     fittestEvolution->maxStagnantGenerationsEver, peakBoost);
