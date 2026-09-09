@@ -130,3 +130,12 @@ Genome Crossover(const Genome &a, float fitnessA, const Genome &b, float fitness
 // counting them toward N let genome bloat crush excess/disjoint toward zero
 // once raw gene-list size passed the normalization cutoff.
 float GeneticDistance(const Genome &a, const Genome &b);
+
+// Persists a single genome on its own (no Evolution/population state) —
+// used by checkpoint training and gif replay to snapshot/reload one genome
+// independent of any particular run. Distinct file format from
+// Evolution.h's SaveEvolution/LoadEvolution (which embeds a whole
+// population), so a checkpoint file only ever contains what it needs to be
+// re-activated: input/output counts, nodes, connections.
+bool SaveGenomeToFile(const Genome &genome, const char *filePath);
+bool LoadGenomeFromFile(Genome &genome, const char *filePath);

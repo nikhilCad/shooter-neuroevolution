@@ -7,8 +7,11 @@
 #include "HistoryGraph.h"
 #include "GenomeVisualizer.h"
 #include "ParameterSweep.h"
+#include "Checkpoint.h"
+#include "GifRecorder.h"
 #include <vector>
 #include <cstring>
+#include <string>
 
 // make dev
 
@@ -25,6 +28,40 @@ int main(int argc, char **argv)
         if (strcmp(argv[i], "--sweep") == 0)
         {
             RunParameterSweep(ParseSweepOptions(argc, argv));
+            return 0;
+        }
+        if (strcmp(argv[i], "--checkpoint-train") == 0)
+        {
+            RunCheckpointTraining(ParseCheckpointTrainOptions(argc, argv));
+            return 0;
+        }
+        if (strncmp(argv[i], "--record-gif=", 13) == 0)
+        {
+            GifRecordOptions options = ParseGifRecordOptions(argc, argv);
+            bool ok = RecordGenomeGif(options);
+            return ok ? 0 : 1;
+        }
+        if (strcmp(argv[i], "--record-checkpoint-gifs") == 0)
+        {
+            std::string checkpointDir = "recordings/checkpoints", outDir = "recordings/gifs";
+            uint64_t seed = 1;
+            float maxSeconds = 45.0f;
+            int fps = 20;
+            for (int j = 1; j < argc; j++)
+            {
+                std::string arg = argv[j];
+                if (arg.rfind("--checkpoint-dir=", 0) == 0)
+                    checkpointDir = arg.substr(17);
+                else if (arg.rfind("--out-dir=", 0) == 0)
+                    outDir = arg.substr(10);
+                else if (arg.rfind("--seed=", 0) == 0)
+                    seed = strtoull(arg.substr(7).c_str(), nullptr, 10);
+                else if (arg.rfind("--max-seconds=", 0) == 0)
+                    maxSeconds = (float)atof(arg.substr(14).c_str());
+                else if (arg.rfind("--fps=", 0) == 0)
+                    fps = atoi(arg.substr(6).c_str());
+            }
+            RecordCheckpointGifs(checkpointDir, outDir, seed, maxSeconds, fps);
             return 0;
         }
     }
@@ -48,7 +85,7 @@ int main(int argc, char **argv)
     // Fast-forward control: cycles through these multipliers, running that many
     // fixed-timestep simulation steps per rendered frame so training speeds up
     // without breaking bullet/enemy collisions.
-    static const int SPEED_LEVELS[] = {1, 2, 16, 4096, 16384, 65536};
+    static const int SPEED_LEVELS[] = {1, 2, 16, 65536, 131072, 262144};
     static const int SPEED_LEVEL_COUNT = sizeof(SPEED_LEVELS) / sizeof(SPEED_LEVELS[0]);
     int speedLevelIndex = 0;
     Rectangle speedButtonRect = {(float)screenWidth - 130.0f, 40.0f, 120.0f, 30.0f};

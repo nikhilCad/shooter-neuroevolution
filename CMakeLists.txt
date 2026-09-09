@@ -32,6 +32,8 @@ add_executable(raylib_cpp
     HistoryGraph.cpp
     GenomeVisualizer.cpp
     ParameterSweep.cpp
+    Checkpoint.cpp
+    GifRecorder.cpp
 )
 
 target_link_libraries(raylib_cpp PRIVATE raylib)
