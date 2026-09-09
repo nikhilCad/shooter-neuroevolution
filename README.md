@@ -12,7 +12,17 @@ make sweep  # run a population-size parameter sweep (override with ARGS="--popul
 
 make sweep ARGS="--populations=80,160 --generations=6000 --repeats=4 --seed=42"
 
-make recordings ARGS="--checkpoints=1,100,1000,4000,10000,25000,50000,100000 --seed=3897129 --max-seconds=120 --fps=20"
+make recordings ARGS="--population=80 --seed=16201731495207994628 --checkpoints=6000"
+```
+
+This seed gives good results
+
+```
+make sweep ARGS="--populations=80 --generations=6000 --repeats=4 --seed=3066333485829883169"
+
+make recordings ARGS="--population=80 --mutation-rate=0.15 --mutation-strength=0.50 --seed=16201731495207994628 --checkpoints=1,6000 --max-seconds=300"
+
+./build/raylib_cpp --record-checkpoint-gifs --checkpoint-dir=recordings/checkpoints --out-dir=recordings/gifs --seed=16201731495207994628 --max-seconds=300 --fps=20
 ```
 
 `make sweep` writes its report to `RESULTS.md` (regenerated each run, along with `sweep_images/`)

@@ -43,10 +43,21 @@ std::vector<float> GetPlayerState(const Player &player, const std::vector<Enemy>
     // only ever seeing the health drop after the fact.
     state[9] = touchCooldownFrac;
 
+    // Reference direction for the reverse-move cone below: directly opposite
+    // wherever the player is currently headed. Left as {0,0} (never inside
+    // any cone) while near-stationary, since "opposite of no movement" isn't
+    // a meaningful direction.
+    float moveSpeed = sqrtf(player.velocity.x * player.velocity.x + player.velocity.y * player.velocity.y);
+    bool hasMoveDir = moveSpeed > 0.0001f;
+    Vector2 reverseMoveDir = hasMoveDir
+                                 ? Vector2{-player.velocity.x / moveSpeed, -player.velocity.y / moveSpeed}
+                                 : Vector2{0.0f, 0.0f};
+
     std::vector<EnemyDistance> distances;
     distances.reserve(enemies.size());
     int nearbyCount = 0;
     int forwardConeCount = 0;
+    int reverseMoveConeCount = 0;
     for (const auto &enemy : enemies)
     {
         if (!enemy.active)
@@ -67,6 +78,8 @@ std::vector<float> GetPlayerState(const Player &player, const std::vector<Enemy>
         float dist = sqrtf(distSq);
         if (dist > 0.0001f && (dx * facing.x + dy * facing.y) / dist > PLAYER_AGENT_FORWARD_CONE_COS)
             forwardConeCount++;
+        if (hasMoveDir && dist > 0.0001f && (dx * reverseMoveDir.x + dy * reverseMoveDir.y) / dist > PLAYER_AGENT_FORWARD_CONE_COS)
+            reverseMoveConeCount++;
     }
     std::sort(distances.begin(), distances.end(), [](const EnemyDistance &a, const EnemyDistance &b)
               { return a.distSq < b.distSq; });
@@ -121,6 +134,7 @@ std::vector<float> GetPlayerState(const Player &player, const std::vector<Enemy>
     // A narrow 20-degree cone naturally holds fewer enemies than the full
     // local-threat radius above, so it gets its own (smaller) cap too.
     state[aggregateBase + 1] = std::min((float)forwardConeCount / 3.0f, 1.0f);
+    state[aggregateBase + 2] = std::min((float)reverseMoveConeCount / 3.0f, 1.0f);
 
     return state;
 }
@@ -150,7 +164,7 @@ const char *PlayerAgentInputLabel(int index)
         "player.touchCooldown"};
     static const char *ENEMY_FEATURE_LABELS[] = {
         "bodyX", "bodyY", "distance", "health", "bodyVX", "bodyVY", "closingSpeed"};
-    static const char *AGGREGATE_LABELS[] = {"nearbyEnemyCount", "forwardConeEnemyCount"};
+    static const char *AGGREGATE_LABELS[] = {"nearbyEnemyCount", "forwardConeEnemyCount", "reverseMoveConeEnemyCount"};
 
     if (index < PLAYER_AGENT_PLAYER_FEATURE_COUNT)
         return PLAYER_FEATURE_LABELS[index];

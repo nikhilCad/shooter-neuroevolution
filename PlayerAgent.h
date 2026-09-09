@@ -17,9 +17,12 @@ const int PLAYER_AGENT_PLAYER_FEATURE_COUNT = 10;
 const int PLAYER_AGENT_NEAREST_ENEMY_COUNT = 4;
 const int PLAYER_AGENT_FEATURES_PER_ENEMY = 7;
 // Aggregate (not per-enemy) features: how many active enemies are within
-// PLAYER_AGENT_LOCAL_THREAT_RADIUS of the player right now, and how many sit
-// in a narrow cone ahead of the player's current aim (PLAYER_AGENT_FORWARD_CONE_COS).
-const int PLAYER_AGENT_AGGREGATE_FEATURE_COUNT = 2;
+// PLAYER_AGENT_LOCAL_THREAT_RADIUS right now; how many sit in a narrow cone
+// ahead of the player's aim (PLAYER_AGENT_FORWARD_CONE_COS); and how many sit
+// in that same cone directly opposite the player's movement direction — a
+// "could shoot this one without changing course" signal, since move and aim
+// are independent outputs and nothing else surfaces that opportunity.
+const int PLAYER_AGENT_AGGREGATE_FEATURE_COUNT = 3;
 const float PLAYER_AGENT_LOCAL_THREAT_RADIUS = 150.0f;
 // cos(20 degrees) — an enemy counts as "ahead" when the angle between the
 // player's facing and the direction to that enemy is within this half-angle,

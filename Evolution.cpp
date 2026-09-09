@@ -348,11 +348,15 @@ namespace
         evo.stagnantGenerations = improved ? 0 : evo.stagnantGenerations + 1;
         evo.maxStagnantGenerationsEver = std::max(evo.maxStagnantGenerationsEver, evo.stagnantGenerations);
 
-        // Ramps from 1x (no boost) up to 2x over the first ~50 stagnant
-        // generations, then keeps climbing (much more slowly) up to 6x by
-        // ~250 stagnant generations for a much deeper plateau that 2x alone
-        // can't break out of.
-        float stagnationBoost = 1.0f + std::min(evo.stagnantGenerations / 50.0f, 5.0f);
+        // Ramps from 1x (no boost) up to 2x at 50 stagnant generations, then
+        // keeps climbing (much more slowly) up to its cap of 3x by 100
+        // stagnant generations for a deeper plateau that 2x alone can't
+        // break out of. Capped lower than an earlier 6x: at that strength,
+        // disruptive weight noise landed hard enough — even on the species
+        // holding the current best genome (see the exemption below) — to
+        // actively prevent it from ever being refined further, rather than
+        // just helping genuinely-stuck species escape a plateau.
+        float stagnationBoost = 1.0f + std::min(evo.stagnantGenerations / 50.0f, 2.0f);
 
         SpeciatePopulation(evo);
         UpdateSpeciesStagnation(evo);
@@ -395,19 +399,23 @@ namespace
         nextGeneration.reserve(evo.populationSize);
         nextGeneration.push_back(evo.bestGenomeEver);
 
-        float mutationRate = std::min(evo.mutationRate * stagnationBoost, 0.5f);
-        float mutationStrength = evo.mutationStrength * stagnationBoost;
-        // Structural mutation chance rides the same stagnation boost, but
-        // capped lower — letting topology balloon as fast as weight noise
-        // ramps up would make a long-stuck population's genomes unwieldy.
-        float structuralBoost = std::min(stagnationBoost, 3.0f);
-
         for (size_t s = 0; s < evo.species.size(); s++)
         {
             const Species &species = evo.species[s];
             int slots = offspringCounts[s];
             if (slots <= 0)
                 continue;
+
+            // The species holding the current all-time-best genome is
+            // exempted from the stagnation boost — it needs to keep
+            // fine-tuning a genuinely good genome at the normal mutation
+            // intensity, not have it blasted by noise meant to help
+            // genuinely-stuck species escape a plateau. Every other species
+            // still rides the full (now-capped) boost, for both weight
+            // mutation and structural mutation chance alike.
+            float speciesBoost = ((int)s == bestSpeciesIndex) ? 1.0f : stagnationBoost;
+            float mutationRate = std::min(evo.mutationRate * speciesBoost, 0.5f);
+            float mutationStrength = evo.mutationStrength * speciesBoost;
 
             std::vector<int> ranked = species.memberIndices;
             std::sort(ranked.begin(), ranked.end(), [&](int a, int b)
@@ -436,9 +444,9 @@ namespace
                 }
 
                 MutateWeights(child, mutationRate, mutationStrength);
-                if (RandomInt(0, 999) < (int)(PROBABILITY_ADD_CONNECTION * structuralBoost * 1000.0f))
+                if (RandomInt(0, 999) < (int)(PROBABILITY_ADD_CONNECTION * speciesBoost * 1000.0f))
                     MutateAddConnection(child, evo.innovationTracker);
-                if (RandomInt(0, 999) < (int)(PROBABILITY_ADD_NODE * structuralBoost * 1000.0f))
+                if (RandomInt(0, 999) < (int)(PROBABILITY_ADD_NODE * speciesBoost * 1000.0f))
                     MutateAddNode(child, evo.innovationTracker);
 
                 nextGeneration.push_back(std::move(child));
@@ -451,11 +459,14 @@ namespace
 
         // Rounding/species-extinction edge cases can leave the count short —
         // top up with mutated clones of the all-time best so population size
-        // never drifts.
+        // never drifts. Mutated at the base (unboosted) rate/strength, same
+        // reasoning as the best species' exemption above: these clones exist
+        // to gently vary a genuinely good genome, not to take a big
+        // stagnation-escape risk with it.
         while ((int)nextGeneration.size() < evo.populationSize)
         {
             Genome extra = evo.bestGenomeEver;
-            MutateWeights(extra, mutationRate, mutationStrength);
+            MutateWeights(extra, evo.mutationRate, evo.mutationStrength);
             nextGeneration.push_back(std::move(extra));
         }
         nextGeneration.resize(evo.populationSize);
