@@ -2,6 +2,8 @@
 #include "RandomUtil.h"
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
+#include <cstdio>
 #include <functional>
 #include <random>
 #include <unordered_set>
@@ -406,4 +408,102 @@ float GeneticDistance(const Genome &a, const Genome &b)
 
     const float C1_EXCESS = 1.0f, C2_DISJOINT = 1.0f, C3_WEIGHT = 0.4f;
     return (C1_EXCESS * excess) / n + (C2_DISJOINT * disjoint) / n + C3_WEIGHT * avgWeightDiff;
+}
+
+namespace
+{
+    const uint32_t GENOME_FILE_MAGIC = 0x474E4F4D; // 'GNOM'
+    const uint32_t GENOME_FILE_VERSION = 1;
+
+    template <typename T>
+    void WriteValue(FILE *file, const T &value) { fwrite(&value, sizeof(T), 1, file); }
+
+    template <typename T>
+    bool ReadValue(FILE *file, T &value) { return fread(&value, sizeof(T), 1, file) == 1; }
+}
+
+bool SaveGenomeToFile(const Genome &genome, const char *filePath)
+{
+    FILE *file = fopen(filePath, "wb");
+    if (!file)
+        return false;
+
+    WriteValue(file, GENOME_FILE_MAGIC);
+    WriteValue(file, GENOME_FILE_VERSION);
+    WriteValue(file, (int32_t)genome.inputCount);
+    WriteValue(file, (int32_t)genome.outputCount);
+    WriteValue(file, (uint32_t)genome.nodes.size());
+    for (const auto &n : genome.nodes)
+    {
+        WriteValue(file, (int32_t)n.id);
+        WriteValue(file, (int32_t)n.type);
+    }
+    WriteValue(file, (uint32_t)genome.connections.size());
+    for (const auto &c : genome.connections)
+    {
+        WriteValue(file, (int32_t)c.inNode);
+        WriteValue(file, (int32_t)c.outNode);
+        WriteValue(file, c.weight);
+        WriteValue(file, (uint8_t)(c.enabled ? 1 : 0));
+        WriteValue(file, (int32_t)c.innovation);
+    }
+
+    fclose(file);
+    return true;
+}
+
+bool LoadGenomeFromFile(Genome &genome, const char *filePath)
+{
+    FILE *file = fopen(filePath, "rb");
+    if (!file)
+        return false;
+
+    uint32_t magic = 0, version = 0;
+    int32_t inputCount = 0, outputCount = 0;
+    uint32_t nodeCount = 0, connectionCount = 0;
+    bool ok = ReadValue(file, magic) && magic == GENOME_FILE_MAGIC &&
+              ReadValue(file, version) && version == GENOME_FILE_VERSION &&
+              ReadValue(file, inputCount) && ReadValue(file, outputCount) &&
+              ReadValue(file, nodeCount);
+
+    Genome loaded;
+    if (ok)
+    {
+        loaded.inputCount = inputCount;
+        loaded.outputCount = outputCount;
+        loaded.nodes.resize(nodeCount);
+        for (auto &n : loaded.nodes)
+        {
+            int32_t id = 0, type = 0;
+            ok = ok && ReadValue(file, id) && ReadValue(file, type);
+            n.id = id;
+            n.type = (NodeType)type;
+        }
+    }
+
+    ok = ok && ReadValue(file, connectionCount);
+    if (ok)
+    {
+        loaded.connections.resize(connectionCount);
+        for (auto &c : loaded.connections)
+        {
+            int32_t inNode = 0, outNode = 0, innovation = 0;
+            float weight = 0.0f;
+            uint8_t enabled = 0;
+            ok = ok && ReadValue(file, inNode) && ReadValue(file, outNode) && ReadValue(file, weight) &&
+                 ReadValue(file, enabled) && ReadValue(file, innovation);
+            c.inNode = inNode;
+            c.outNode = outNode;
+            c.weight = weight;
+            c.enabled = enabled != 0;
+            c.innovation = innovation;
+        }
+    }
+
+    fclose(file);
+    if (!ok)
+        return false;
+
+    genome = std::move(loaded);
+    return true;
 }

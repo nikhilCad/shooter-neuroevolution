@@ -11,6 +11,8 @@ make dev    # build and play the game interactively (watch the agent train live)
 make sweep  # run a population-size parameter sweep (override with ARGS="--populations=20,40,60,80 --generations=4000 --repeats=4 --seed=42")
 
 make sweep ARGS="--populations=80,160 --generations=6000 --repeats=4 --seed=42"
+
+make recordings ARGS="--checkpoints=1,100,1000,4000,10000,25000,50000,100000 --seed=3897129 --max-seconds=120 --fps=20"
 ```
 
 `make sweep` writes its report to `RESULTS.md` (regenerated each run, along with `sweep_images/`)
