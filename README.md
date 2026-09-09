@@ -31,6 +31,23 @@ count or thread scheduling) — reuse the same value (`42` above is just an exam
 A/B a code change cleanly, or omit it for a fresh auto-generated seed, printed and saved into
 `RESULTS.md` either way so any run can be reproduced later.
 
+# Sample run
+
+1st generation - A score of 400 with survival time of 15 seconds
+
+![1st Gen](docs/gen_score_00001.gif)
+
+6000th Generation - A score of 20,800 with survival time of 278 seconds
+
+![6k Gen](docs/gen_score_06000.gif)
+
+These were the final learned nodes
+
+![Neuro nodes](docs/fittest_genome.png)
+
+And here is the fitness graph over time
+![Graph](docs/pop80.png)
+
 ## Documentation
 
 - [ARCHITECTURE.md](ARCHITECTURE.md) — current design: the NEAT genome representation, mutation/crossover/speciation, network inputs and outputs, and how the pieces fit together (with diagrams).

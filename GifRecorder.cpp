@@ -163,8 +163,13 @@ bool RecordGenomeGif(const GifRecordOptions &options)
     UnloadRenderTexture(target);
 
     int delayCentiseconds = std::max(2, (int)std::lround(100.0 / options.captureFps));
+    // -layers Optimize diffs each frame against the previous one and only
+    // encodes the changed region instead of re-quantizing/dithering a full
+    // frame from scratch every time — without it, magick treats every frame
+    // as an unrelated image, which is disastrously slow (and produces a much
+    // bigger file) for something like this game's mostly-static background.
     std::string command = "magick -delay " + std::to_string(delayCentiseconds) + " -loop 0 '" +
-                          framesDir + "/frame_*.png' '" + options.outputGifPath + "'";
+                          framesDir + "/frame_*.png' -layers Optimize '" + options.outputGifPath + "'";
     int result = system(command.c_str());
     system(("rm -rf '" + framesDir + "'").c_str()); // clean up temp frames either way
 
