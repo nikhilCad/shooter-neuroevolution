@@ -105,6 +105,19 @@ void RunCheckpointTraining(const CheckpointTrainOptions &options)
     size_t nextCheckpointIndex = 0;
     auto start = std::chrono::steady_clock::now();
 
+    // Tracks the single genome (and the exact seed that reproduces its
+    // episode) that set the highest score anyone's ever gotten, up through
+    // whatever generation a checkpoint falls on — independent of
+    // bestGenomeEver, which is chosen by fitness, not raw score. The two
+    // routinely diverge: a reckless, high-kill-rate genome can post a huge
+    // score while dying too soon to also have the best fitness. Saved
+    // alongside (never replacing) the regular fitness-based checkpoint, as
+    // gen_score_<N>.genome + gen_score_<N>.seed.
+    Genome bestScoreGenomeEver;
+    int bestScoreValueEver = -1;
+    uint64_t bestScoreSeedEver = 0;
+    bool haveBestScoreGenome = false;
+
     while (evolution.generation <= maxGeneration)
     {
         int generation = evolution.generation; // captured before FinishEpisode can advance it below
@@ -137,7 +150,20 @@ void RunCheckpointTraining(const CheckpointTrainOptions &options)
         // of thread count/scheduling.
         SeedRandomEngine(CombineSeed(options.seed, generation, -1));
         for (int i = 0; i < evolution.populationSize; i++)
+        {
+            // Captured before FinishEpisode's EvolvePopulation call (on the
+            // last i) overwrites evolution.population with the next
+            // generation — evolution.population[i] is still this episode's
+            // genome right now.
+            if (!haveBestScoreGenome || outcomes[i].score > bestScoreValueEver)
+            {
+                bestScoreValueEver = outcomes[i].score;
+                bestScoreGenomeEver = evolution.population[i];
+                bestScoreSeedEver = CombineSeed(options.seed, generation, i);
+                haveBestScoreGenome = true;
+            }
             FinishEpisode(evolution, outcomes[i].fitness, outcomes[i].score, outcomes[i].time);
+        }
 
         // evolution.generation is now generation+1 (EvolvePopulation ran
         // inside the last FinishEpisode call above) — bestGenomeEver already
@@ -152,6 +178,26 @@ void RunCheckpointTraining(const CheckpointTrainOptions &options)
             printf("[checkpoint] gen %d -> %s (%s) bestFitnessEver=%.1f bestScoreEver=%d bestTimeEver=%.1f\n",
                    g, path, saved ? "saved" : "FAILED", evolution.bestFitnessEver,
                    evolution.bestScoreEver, evolution.bestTimeEver);
+
+            // Additional, separate snapshot: whichever genome/episode set the
+            // highest score so far (not the same genome as bestGenomeEver in
+            // general — see the comment where these are tracked above). The
+            // seed sidecar is what lets a later replay reproduce that exact
+            // episode instead of just seeing "some genome, some random game."
+            char scoreGenomePath[512], scoreSeedPath[512];
+            snprintf(scoreGenomePath, sizeof(scoreGenomePath), "%s/gen_score_%05d.genome", options.outDir.c_str(), g);
+            snprintf(scoreSeedPath, sizeof(scoreSeedPath), "%s/gen_score_%05d.seed", options.outDir.c_str(), g);
+            bool scoreGenomeSaved = SaveGenomeToFile(bestScoreGenomeEver, scoreGenomePath);
+            bool scoreSeedSaved = false;
+            if (FILE *seedFile = fopen(scoreSeedPath, "w"))
+            {
+                scoreSeedSaved = fprintf(seedFile, "%llu\n", (unsigned long long)bestScoreSeedEver) > 0;
+                fclose(seedFile);
+            }
+            printf("[checkpoint] gen %d -> %s + %s (%s) topScoreEver=%d\n",
+                   g, scoreGenomePath, scoreSeedPath, (scoreGenomeSaved && scoreSeedSaved) ? "saved" : "FAILED",
+                   bestScoreValueEver);
+
             nextCheckpointIndex++;
         }
 

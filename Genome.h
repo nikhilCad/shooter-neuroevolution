@@ -40,16 +40,21 @@ struct Genome
     std::vector<ConnectionGene> connections;
 
     // --- Evaluation cache, built lazily by Activate (see Genome.cpp) ---
-    // A genome's structure is fixed for its whole lifetime once constructed:
-    // every mutation that can change nodes/connections (MutateAddConnection,
-    // MutateAddNode) always runs to completion before a genome is ever
-    // Activate()'d for the first time, and both invalidate this cache when
-    // they touch structure. MutateWeights never invalidates it, since
-    // changing a weight doesn't change which nodes exist or how they're
-    // wired — only the numbers looked up during evaluation. Without this,
-    // Activate would have to re-derive topological order and per-node
-    // incoming-connection lists from scratch on every single simulated tick,
-    // which is by far the hottest path in the whole program.
+    // Without this, Activate would have to re-derive topological order and
+    // per-node incoming-connection lists from scratch on every single
+    // simulated tick, which is by far the hottest path in the whole program —
+    // it only needs rebuilding once per genome per generation instead.
+    // compiledIncoming snapshots each enabled connection's WEIGHT VALUE at
+    // build time (not a reference into `connections`), so every mutator that
+    // can change a genome's behavior — MutateWeights included, not just the
+    // structural MutateAddConnection/MutateAddNode — must invalidate this
+    // cache. A genome copied from one that already played an episode this
+    // generation (asexual reproduction, or the bestGenomeEver "top up"
+    // fallback in EvolvePopulation) inherits an already-valid cache; skipping
+    // invalidation there once caused a real bug — a copy's weight mutations
+    // silently had no effect on its own behavior until some later structural
+    // mutation forced a rebuild, even though the mutated weights were still
+    // what got saved/inherited from it going forward.
     // `mutable` because this is a pure implementation-detail cache, not part
     // of the genome's logical (const-observable) state.
     mutable bool compiledValid = false;

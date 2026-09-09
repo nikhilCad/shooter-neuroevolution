@@ -16,6 +16,13 @@ struct GifRecordOptions
     std::string genomePath;
     std::string outputGifPath;
     uint64_t seed = 1;
+    // True only if --seed was actually passed. Left false, RecordGenomeGif
+    // looks for a <genomePath-without-.genome>.seed sidecar (written by
+    // Checkpoint.cpp for its gen_score_<N>.genome top-score checkpoints) and
+    // uses that instead — so recording one specific genome+RNG combo (e.g.
+    // "the exact episode that hit the top score") is a single command,
+    // without having to open the sidecar and copy the number in by hand.
+    bool seedSpecified = false;
     // Longest an episode ever needs to run at fast-forward speed to prove
     // the point visually — good genomes can survive minutes, but a 4-5
     // minute-long gif is a poor way to look at one, so recording just stops
@@ -26,6 +33,8 @@ struct GifRecordOptions
 
 // Recognized flags: --record-gif=<genomeFile> --out=<outputGif>
 //                    --seed=1 --max-seconds=45 --fps=20
+// (omit --seed for a gen_score_<N>.genome file to auto-use its paired
+// gen_score_<N>.seed instead of the default)
 GifRecordOptions ParseGifRecordOptions(int argc, char **argv);
 
 // Requires an OpenGL context — call after InitWindow (a hidden one is fine;

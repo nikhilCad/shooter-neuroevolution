@@ -202,6 +202,15 @@ void MutateWeights(Genome &genome, float mutationRate, float mutationStrength)
     for (auto &c : genome.connections)
         if (chance(RandomEngine()) < mutationRate)
             c.weight += noise(RandomEngine());
+    // BuildCompiledCache snapshots each weight's VALUE into compiledIncoming
+    // at cache-build time — Activate() reads that cached copy, never
+    // genome.connections directly. So a genome whose cache was already built
+    // (e.g. copied from a parent that already played an episode this
+    // generation) would otherwise keep activating with its PRE-mutation
+    // weights until some future structural mutation forces a rebuild —
+    // silently discarding this mutation's effect on behavior even though the
+    // mutated weight is still what gets saved/inherited from here on.
+    genome.compiledValid = false;
 }
 
 void MutateAddConnection(Genome &genome, InnovationTracker &tracker)

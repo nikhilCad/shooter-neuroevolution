@@ -24,7 +24,10 @@ GifRecordOptions ParseGifRecordOptions(int argc, char **argv)
         else if (arg.rfind("--out=", 0) == 0)
             options.outputGifPath = valueAfter("--out=");
         else if (arg.rfind("--seed=", 0) == 0)
+        {
             options.seed = strtoull(valueAfter("--seed=").c_str(), nullptr, 10);
+            options.seedSpecified = true;
+        }
         else if (arg.rfind("--max-seconds=", 0) == 0)
             options.maxSeconds = (float)std::atof(valueAfter("--max-seconds=").c_str());
         else if (arg.rfind("--fps=", 0) == 0)
@@ -61,6 +64,29 @@ namespace
                 CloseWindow();
         }
     };
+
+    // Checkpoint.cpp writes gen_score_<N>.seed next to gen_score_<N>.genome —
+    // the exact seed that reproduces that specific top-score episode. Reads
+    // it back given the .genome path; returns false (leaving seedOut
+    // untouched) if there's no matching sidecar.
+    bool ReadSeedSidecar(const std::string &genomePath, uint64_t &seedOut)
+    {
+        std::string seedPath = genomePath;
+        if (seedPath.size() > 7 && seedPath.rfind(".genome") == seedPath.size() - 7)
+            seedPath = seedPath.substr(0, seedPath.size() - 7) + ".seed";
+        else
+            seedPath += ".seed";
+
+        FILE *file = fopen(seedPath.c_str(), "r");
+        if (!file)
+            return false;
+        unsigned long long parsed = 0;
+        bool ok = fscanf(file, "%llu", &parsed) == 1;
+        fclose(file);
+        if (ok)
+            seedOut = (uint64_t)parsed;
+        return ok;
+    }
 }
 
 bool RecordGenomeGif(const GifRecordOptions &options)
@@ -70,6 +96,19 @@ bool RecordGenomeGif(const GifRecordOptions &options)
     {
         printf("Could not load genome from %s\n", options.genomePath.c_str());
         return false;
+    }
+    // An explicit --seed always wins; otherwise, a gen_score_<N>.genome's
+    // paired .seed sidecar (if any) reproduces its exact record-setting
+    // episode instead of a generic default.
+    uint64_t seed = options.seed;
+    if (!options.seedSpecified)
+    {
+        uint64_t sidecarSeed;
+        if (ReadSeedSidecar(options.genomePath, sidecarSeed))
+        {
+            seed = sidecarSeed;
+            printf("Using seed %llu from sidecar next to %s\n", (unsigned long long)seed, options.genomePath.c_str());
+        }
     }
 
     const int screenWidth = 800, screenHeight = 600;
@@ -81,7 +120,7 @@ bool RecordGenomeGif(const GifRecordOptions &options)
 
     RenderTexture2D target = LoadRenderTexture(screenWidth, screenHeight);
 
-    SeedRandomEngine(options.seed); // same determinism guarantee as PlayEpisode
+    SeedRandomEngine(seed); // same determinism guarantee as PlayEpisode
     Player player;
     std::vector<Bullet> bullets;
     std::vector<Enemy> enemies;
@@ -136,9 +175,9 @@ bool RecordGenomeGif(const GifRecordOptions &options)
         return false;
     }
 
-    printf("Recorded %s -> %s (%d frames, %.1fs episode%s, seed=%llu)\n",
-           options.genomePath.c_str(), options.outputGifPath.c_str(), frameCount, episode.time,
-           episodeEnded ? "" : ", capped by --max-seconds", (unsigned long long)options.seed);
+    printf("Recorded %s -> %s (%d frames, %.1fs episode, score=%d%s, seed=%llu)\n",
+           options.genomePath.c_str(), options.outputGifPath.c_str(), frameCount, episode.time, episode.score,
+           episodeEnded ? "" : ", capped by --max-seconds", (unsigned long long)seed);
     return true;
 }
 
@@ -147,7 +186,14 @@ void RecordCheckpointGifs(const std::string &checkpointDir, const std::string &o
 {
     system(("mkdir -p '" + outDir + "'").c_str());
 
-    std::vector<std::string> genomeFiles;
+    // Regular fitness-based checkpoints (gen_<N>.genome) all replay under the
+    // one shared batch seed, for a fair apples-to-apples comparison across
+    // milestones. Score checkpoints (gen_score_<N>.genome, from
+    // Checkpoint.cpp's separate top-score tracking) are a different kind of
+    // recording entirely — each one has its own paired gen_score_<N>.seed,
+    // the exact seed that reproduces that specific record-setting episode,
+    // and gets replayed with that instead of the batch seed.
+    std::vector<std::string> genomeFiles, scoreGenomeFiles;
     DIR *dir = opendir(checkpointDir.c_str());
     if (!dir)
     {
@@ -157,22 +203,29 @@ void RecordCheckpointGifs(const std::string &checkpointDir, const std::string &o
     while (dirent *entry = readdir(dir))
     {
         std::string name = entry->d_name;
-        if (name.size() > 7 && name.rfind("gen_", 0) == 0 && name.rfind(".genome") == name.size() - 7)
+        if (name.size() <= 7 || name.rfind(".genome") != name.size() - 7)
+            continue;
+        if (name.rfind("gen_score_", 0) == 0)
+            scoreGenomeFiles.push_back(name);
+        else if (name.rfind("gen_", 0) == 0)
             genomeFiles.push_back(name);
     }
     closedir(dir);
     std::sort(genomeFiles.begin(), genomeFiles.end());
+    std::sort(scoreGenomeFiles.begin(), scoreGenomeFiles.end());
 
-    if (genomeFiles.empty())
+    if (genomeFiles.empty() && scoreGenomeFiles.empty())
     {
         printf("No gen_*.genome files found in %s\n", checkpointDir.c_str());
         return;
     }
 
-    printf("Recording %zu checkpoint(s) from %s -> %s (seed=%llu, max-seconds=%.1f, fps=%d) — pass "
-           "--seed=%llu to reproduce this exact batch (same enemy-spawn pattern for every genome).\n",
-           genomeFiles.size(), checkpointDir.c_str(), outDir.c_str(), (unsigned long long)seed,
-           maxSeconds, captureFps, (unsigned long long)seed);
+    printf("Recording %zu checkpoint(s) + %zu top-score checkpoint(s) from %s -> %s "
+           "(seed=%llu, max-seconds=%.1f, fps=%d) — pass --seed=%llu to reproduce the regular "
+           "checkpoints' batch (same enemy-spawn pattern for every genome); each top-score "
+           "checkpoint replays under its own recorded seed instead.\n",
+           genomeFiles.size(), scoreGenomeFiles.size(), checkpointDir.c_str(), outDir.c_str(),
+           (unsigned long long)seed, maxSeconds, captureFps, (unsigned long long)seed);
 
     const int screenWidth = 800, screenHeight = 600;
     ScopedHiddenWindow window(screenWidth, screenHeight); // shared across every recording in the batch
@@ -184,6 +237,26 @@ void RecordCheckpointGifs(const std::string &checkpointDir, const std::string &o
         options.genomePath = checkpointDir + "/" + fileName;
         options.outputGifPath = outDir + "/" + baseName + ".gif";
         options.seed = seed;
+        options.seedSpecified = true; // batch seed, shared across every regular checkpoint
+        options.maxSeconds = maxSeconds;
+        options.captureFps = captureFps;
+        RecordGenomeGif(options);
+    }
+
+    for (const std::string &fileName : scoreGenomeFiles)
+    {
+        std::string baseName = fileName.substr(0, fileName.size() - 7); // strip ".genome"
+        std::string genomePath = checkpointDir + "/" + fileName;
+
+        uint64_t recordSeed = seed; // fallback if the sidecar is missing
+        if (!ReadSeedSidecar(genomePath, recordSeed))
+            printf("Missing/unreadable seed sidecar for %s, falling back to batch seed\n", fileName.c_str());
+
+        GifRecordOptions options;
+        options.genomePath = genomePath;
+        options.outputGifPath = outDir + "/" + baseName + ".gif";
+        options.seed = recordSeed;
+        options.seedSpecified = true; // resolved above — RecordGenomeGif shouldn't re-read the sidecar itself
         options.maxSeconds = maxSeconds;
         options.captureFps = captureFps;
         RecordGenomeGif(options);
