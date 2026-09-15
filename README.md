@@ -39,9 +39,9 @@ genomes). Both are gitignored; regenerate anytime.
 
 ![1st Gen](docs/gen_score_00001.gif)
 
-Generation 6000 — score 20,800, survived 278 seconds (first 20s clip, resized/optimized for loading — [full gif](docs/gen_score_06000.gif) is 278s/16MB):
+Generation 6000 — score 20,800, survived 278 seconds (compressed to 4.7MB for loading — [high-res version](docs/gen_score_06000.gif) is the same 278s at full resolution/framerate, 16MB):
 
-![6k Gen](docs/gen_score_06000_optimized.gif)
+![6k Gen](docs/gen_score_06000_compressed.gif)
 
 The learned network:
 
